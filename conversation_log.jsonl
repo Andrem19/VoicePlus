@@ -1,0 +1,35 @@
+{"ts": "2025-10-30T03:14:30.088Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "tgt_lang": "ru", "text": "Hello?", "translation": "Эй?"}
+{"ts": "2025-10-30T03:14:35.673Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "tgt_lang": "ru", "text": "How are you?", "translation": "Как ты?"}
+{"ts": "2025-10-30T03:14:42.551Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "tgt_lang": "ru", "text": "I'm alright.", "translation": "Я в порядке."}
+{"ts": "2025-10-30T03:17:52.572Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "tgt_lang": "ru", "text": "below.", "translation": "ниже."}
+{"ts": "2025-10-30T03:17:57.061Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "tgt_lang": "ru", "text": "you", "translation": "Ты"}
+{"ts": "2025-10-30T03:18:03.047Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "tgt_lang": "ru", "text": "I am alright.", "translation": "Я в порядке."}
+{"ts": "2025-10-30T03:22:51.763Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "tgt_lang": "ru", "text": "You all right?", "translation": "Ты в порядке?"}
+{"ts": "2025-10-30T03:23:14.859Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "tgt_lang": "ru", "text": "Hey, I'm still here.", "translation": "Эй, я все еще здесь."}
+{"ts": "2025-10-30T03:35:34.611Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "tgt_lang": "ru", "text": "The Lomeran.", "translation": "Ломеран."}
+{"ts": "2025-10-30T03:40:06.429Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "tgt_lang": "ru", "text": "Hello.", "translation": "Привет."}
+{"ts": "2025-10-30T03:40:09.122Z", "type": "suggestion", "model": "llama3.2:1b", "to_say_en": "Hello."}
+{"ts": "2025-10-30T03:40:11.928Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "tgt_lang": "ru", "text": "I want to speak with you.", "translation": "Я хочу поговорить с тобой."}
+{"ts": "2025-10-30T03:40:12.882Z", "type": "suggestion", "model": "llama3.2:1b", "to_say_en": "I'm available. How can I assist you?"}
+{"ts": "2025-10-30T03:40:22.642Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "tgt_lang": "ru", "text": "I'm available, how can I assist you?", "translation": "Я свободен, чем могу помочь?"}
+{"ts": "2025-10-30T03:40:23.578Z", "type": "suggestion", "model": "llama3.2:1b", "to_say_en": "I'm available, how can I assist you?"}
+{"ts": "2025-10-30T03:40:39.990Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "tgt_lang": "ru", "text": "I want you just to tell with me.", "translation": "Я хочу, чтобы ты рассказала мне."}
+{"ts": "2025-10-30T03:40:40.922Z", "type": "suggestion", "model": "llama3.2:1b", "to_say_en": "I'm here. What's on your mind?"}
+{"ts": "2025-10-30T03:40:54.285Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "tgt_lang": "ru", "text": "I'm here, what's on your mind?", "translation": "Я здесь, что у тебя на уме?"}
+{"ts": "2025-10-30T03:40:55.226Z", "type": "suggestion", "model": "llama3.2:1b", "to_say_en": "I'm here. What's on your mind?"}
+{"ts": "2025-10-30T03:41:19.799Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "tgt_lang": "ru", "text": "It's time go to bed.", "translation": "Пора ложиться спать."}
+{"ts": "2025-10-30T03:41:20.420Z", "type": "suggestion", "model": "llama3.2:1b", "to_say_en": "It's time to sleep."}
+{"ts": "2025-10-30T03:41:59.494Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "tgt_lang": "ru", "text": "One to hear customer support opening hour.", "translation": "Один, чтобы послушать поддержку клиентов."}
+{"ts": "2025-10-30T03:42:10.716Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "tgt_lang": "ru", "text": "Press 2 if you're reporting an urgent issue at 1 o'clock.", "translation": "Нажмите 2, если вы сообщаете о срочной проблеме в час."}
+{"ts": "2025-10-30T03:42:13.763Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "tgt_lang": "ru", "text": "Customer support opening now.", "translation": "Сейчас открывается поддержка клиента."}
+{"ts": "2025-10-30T03:42:19.719Z", "type": "suggestion", "model": "llama3.2:1b", "to_say_en": "Customer support opening now."}
+{"ts": "2025-10-30T03:46:52.007Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "tgt_lang": "ru", "text": "How can I tell you?", "translation": "Как я могу тебе сказать?"}
+{"ts": "2025-10-30T03:46:54.394Z", "type": "suggestion", "model": "mistral:latest", "to_say_en": "\"By speaking or typing your message.\""}
+{"ts": "2025-10-30T03:47:05.573Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "tgt_lang": "ru", "text": "I want to speak with you.", "translation": "Я хочу поговорить с тобой."}
+{"ts": "2025-10-30T03:47:07.673Z", "type": "suggestion", "model": "mistral:latest", "to_say_en": "Sure, let's chat!"}
+{"ts": "2025-10-30T03:47:15.964Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "tgt_lang": "ru", "text": "Sure, let's go.", "translation": "Конечно, пойдем."}
+{"ts": "2025-10-30T03:47:18.040Z", "type": "suggestion", "model": "mistral:latest", "to_say_en": "Let's start talking now."}
+{"ts": "2025-10-30T03:47:33.755Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "tgt_lang": "ru", "text": "really late time.", "translation": "Очень поздно."}
+{"ts": "2025-10-30T03:47:44.357Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "tgt_lang": "ru", "text": "We need to go to bed.", "translation": "Нам нужно ложиться спать."}
+{"ts": "2025-10-30T03:48:09.536Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "tgt_lang": "ru", "text": "But I don't want to sleep.", "translation": "Но я не хочу спать."}
+{"ts": "2025-10-30T03:48:12.606Z", "type": "suggestion", "model": "mistral:latest", "to_say_en": "It's okay, let's chat then!"}
