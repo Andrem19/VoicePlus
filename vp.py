@@ -3,17 +3,12 @@
 
 import os, sys, asyncio, json, signal, datetime as dt, subprocess, contextlib, time, re as _re
 import websockets
+import urllib.request, urllib.error
 
-# ====== (опционально красиво) rich ======
-HAVE_RICH = True
-try:
-    from rich.console import Console
-    from rich.live import Live
-    from rich.table import Table
-    from rich.panel import Panel
-    from rich.text import Text
-except Exception:
-    HAVE_RICH = False
+# ===================== ТЕСТОВЫЕ ПЕРЕМЕННЫЕ (цель/контекст) =====================
+# Можно править здесь или через .env (см. ниже переменные DIALOG_GOAL_EN / DIALOG_CONTEXT_EN)
+DIALOG_GOAL_EN_DEFAULT    = "I'm calling my electricity provider to arrange and order a smart meter as soon as possible."
+DIALOG_CONTEXT_EN_DEFAULT = "United Kingdom context, I am a 35-year-old male customer. Be concise, polite and goal-driven."
 
 # ------------------- конфиг / окружение -------------------
 def load_env(path=".env"):
@@ -33,6 +28,16 @@ API_KEY = ENV.get("SPEECHMATICS_API") or ENV.get("SPEECHMATICS_API_KEY") or ""
 if not API_KEY:
     print("ERROR: Добавьте SPEECHMATICS_API=... в .env", file=sys.stderr)
     sys.exit(1)
+
+# ---------- OpenAI / SUGGEST ----------
+OPENAI_API_KEY       = (ENV.get("OPENAI_API") or "").strip()
+ENABLE_SUGGEST       = ENV.get("ENABLE_SUGGEST", "1").lower() in ("1","true","yes")  # можно выключить
+SUGGEST_MODEL        = ENV.get("SUGGEST_MODEL", "gpt-4o-mini")
+SUGGEST_MAX_HISTORY  = int(ENV.get("SUGGEST_MAX_HISTORY", "10"))  # брать последние N реплик (S1/S2 совместно)
+SUGGEST_TIMEOUT      = float(ENV.get("SUGGEST_TIMEOUT", "6.0"))   # сек, неблокирующая задача
+SUGGEST_TEMPERATURE  = float(ENV.get("SUGGEST_TEMPERATURE", "0.2"))
+DIALOG_GOAL_EN       = (ENV.get("DIALOG_GOAL_EN") or DIALOG_GOAL_EN_DEFAULT).strip()
+DIALOG_CONTEXT_EN    = (ENV.get("DIALOG_CONTEXT_EN") or DIALOG_CONTEXT_EN_DEFAULT).strip()
 
 DEBUG  = ENV.get("DEBUG", "0").lower() in ("1","true","yes")
 SM_ENDPOINT = ENV.get("SPEECHMATICS_WSS", "wss://eu2.rt.speechmatics.com/v2/")
@@ -82,21 +87,28 @@ _print_lock = asyncio.Lock()
 
 async def print_and_log(line: str):
     async with _print_lock:
-        if LIVE and LIVE.use_rich and LIVE.console:
-            LIVE.console.print(line)
-        else:
-            print(line, flush=True)
+        print(line, flush=True)
         with open(LOG_PATH, "a", encoding="utf-8") as f:
             f.write(strip_ansi(line) + "\n")
 
 async def info_line(s: str):
     if DEBUG:
-        await print_and_log(f"{DIM}{s}{RESET}" if not (LIVE and LIVE.use_rich) else s)
+        await print_and_log(f"{DIM}{s}{RESET}" if USE_COLOR else s)
 
 async def head_line(s: str):
-    await print_and_log(f"{CYAN}{s}{RESET}" if not (LIVE and LIVE.use_rich) else s)
+    await print_and_log(f"{CYAN}{s}{RESET}" if USE_COLOR else s)
 
 # ------------------- Live UI -------------------
+HAVE_RICH = True
+try:
+    from rich.console import Console
+    from rich.live import Live
+    from rich.table import Table
+    from rich.panel import Panel
+    from rich.text import Text
+except Exception:
+    HAVE_RICH = False
+
 class LiveManager:
     """Две «живые» строки (S1/S2) в футере. История печатается отдельно."""
     def __init__(self, use_rich: bool):
@@ -190,14 +202,12 @@ class LiveManager:
                 await print_and_log(f"{ts()} | {label} → RU: {tr_text.strip()}")
             else:
                 await print_and_log(f"{ts()} | {label} → RU: —")
-        await print_and_log(f"{ts()} | SUGGEST: —")
+        # SUGGEST печатаем placeholder только для S2 (наш собеседник), потом неблокирующе допечатаем варианты
+        if ENABLE_SUGGEST and label == "S2":
+            await print_and_log(f"{ts()} | SUGGEST: —")
 
 # ------------------- менеджер перевода -------------------
 class TranslationManager:
-    """
-    Копит финальные AddTranslation и печатает их пост-фактум, если не успели к моменту фиксации реплики.
-    Ничего не блокирует.
-    """
     def __init__(self, live: LiveManager):
         self.live = live
         self._parts = {"S1": [], "S2": []}
@@ -260,8 +270,143 @@ class TranslationManager:
         except asyncio.CancelledError:
             pass
 
+# ------------------- менеджер SUGGEST (OpenAI) -------------------
+class SuggestionManager:
+    """
+    Неблокирующая генерация 3 коротких ответов для S1 после финала S2.
+    Хранит историю (финальные реплики), шлёт в OpenAI последние N, печатает одной строкой.
+    """
+    def __init__(self):
+        self.history = []  # список кортежей (label, text) только финалы
+        self.queue = asyncio.Queue()
+        self.worker_task = None
+        self.enabled = ENABLE_SUGGEST and bool(OPENAI_API_KEY)
+
+    def add_history(self, label: str, text: str):
+        self.history.append((label, text))
+        if len(self.history) > max(2 * SUGGEST_MAX_HISTORY, 20):
+            self.history = self.history[-max(2 * SUGGEST_MAX_HISTORY, 20):]
+
+    async def start(self):
+        if self.enabled:
+            self.worker_task = asyncio.create_task(self._worker())
+        else:
+            if ENABLE_SUGGEST and not OPENAI_API_KEY:
+                await head_line("[SUGGEST] OPENAI_API пуст — подсказки отключены.")
+
+    async def stop(self):
+        if self.worker_task:
+            self.worker_task.cancel()
+            with contextlib.suppress(Exception): await self.worker_task
+
+    async def schedule_for_s2(self):
+        """Планируем подсказку на основе последних N реплик."""
+        if not self.enabled:
+            return
+        # снимок последних N
+        tail = self.history[-SUGGEST_MAX_HISTORY:]
+        await self.queue.put(tail)
+
+    async def _worker(self):
+        while True:
+            tail = await self.queue.get()
+            try:
+                suggestions = await self._generate_suggestions(tail)
+                if suggestions:
+                    # печатаем одной строкой
+                    line = " | ".join(f"{i+1}) {s}" for i, s in enumerate(suggestions[:3]))
+                    await print_and_log(f"{ts()} | SUGGEST: {line}")
+                # иначе — оставляем «SUGGEST: —»
+            except Exception as e:
+                await info_line(f"[SUGGEST] error: {e}")
+            finally:
+                self.queue.task_done()
+
+    # ---- OpenAI HTTP helper (без внешних зависимостей) ----
+    async def _post_json(self, url: str, headers: dict, payload: dict, timeout: float):
+        def _do():
+            data = json.dumps(payload).encode("utf-8")
+            req = urllib.request.Request(url, data=data, method="POST")
+            for k, v in headers.items():
+                req.add_header(k, v)
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, _do)
+
+    def _build_prompt(self, tail: list[tuple[str,str]]) -> dict:
+        # Формируем компактную текстовую историю
+        lines = []
+        for lab, txt in tail:
+            lines.append(f"{lab}: {txt}")
+        hist_txt = "\n".join(lines) if lines else "(no history yet)"
+
+        system_msg = (
+            "You are a concise suggestion generator for a LIVE phone call. "
+            "You speak for the caller (S1). The other party is the agent (S2). "
+            "After reading the recent transcript, output EXACTLY three short, natural, goal-driven replies "
+            "the caller (S1) could say NEXT, in English, suitable for the UK. "
+            "Keep each under 20 words, polite, clear, and progressing toward the goal. "
+            "Return ONLY a JSON array of 3 strings."
+        )
+
+        user_msg = (
+            f"Goal: {DIALOG_GOAL_EN}\n"
+            f"Context: {DIALOG_CONTEXT_EN}\n\n"
+            f"Recent transcript (last {SUGGEST_MAX_HISTORY} turns):\n{hist_txt}\n\n"
+            "Now return a JSON array of 3 suggestions for S1's next reply."
+        )
+        return {
+            "model": SUGGEST_MODEL,
+            "messages": [
+                {"role": "system", "content": system_msg},
+                {"role": "user", "content": user_msg},
+            ],
+            "temperature": SUGGEST_TEMPERATURE,
+            "max_tokens": 160,
+        }
+
+    async def _generate_suggestions(self, tail: list[tuple[str,str]]):
+        payload = self._build_prompt(tail)
+        headers = {
+            "Authorization": f"Bearer {OPENAI_API_KEY}",
+            "Content-Type": "application/json",
+        }
+        # Chat Completions endpoint
+        url = "https://api.openai.com/v1/chat/completions"
+        try:
+            resp = await self._post_json(url, headers, payload, timeout=SUGGEST_TIMEOUT)
+            content = (resp.get("choices") or [{}])[0].get("message", {}).get("content", "") or ""
+            # ждём JSON-массив
+            suggestions = None
+            try:
+                suggestions = json.loads(content)
+            except Exception:
+                # fallback: попытка вытащить массив из текста
+                m = _re.search(r"\[[\s\S]*\]", content)
+                if m:
+                    suggestions = json.loads(m.group(0))
+            if not isinstance(suggestions, list):
+                return None
+            # очистка и нормализация
+            out = []
+            for s in suggestions:
+                if not isinstance(s, str): continue
+                s = _re.sub(r"\s+", " ", s).strip()
+                if s:
+                    out.append(s)
+                if len(out) == 3: break
+            return out if out else None
+        except urllib.error.HTTPError as e:
+            txt = e.read().decode("utf-8", "ignore")
+            raise RuntimeError(f"OpenAI HTTP {e.code}: {txt}") from None
+        except Exception as e:
+            raise
+
+# глобальные менеджеры
 LIVE: LiveManager | None = None
 TM: TranslationManager | None = None
+SM: SuggestionManager | None = None
 
 # ------------------- Коалесцер реплик -------------------
 class Coalescer:
@@ -326,8 +471,17 @@ class Coalescer:
         tr_now = None
         if TM:
             tr_now = await TM.on_utterance_finalized(label)
+
         await self.live.clear_live_line(label)
         await self.live.print_final_with_extras(label, txt, tr_text=tr_now)
+
+        # ---- История и SUGGEST ----
+        if SM:
+            SM.add_history(label, txt)
+            if ENABLE_SUGGEST and label == "S2":
+                # планируем подсказки (неблокирующе)
+                await SM.schedule_for_s2()
+
         self._parts[label].clear()
         self._partial[label] = ""
         self._last_activity[label] = 0.0
@@ -419,7 +573,6 @@ def _extract_transcript(d: dict) -> str:
     return res_t if len(res_t) > len(meta_t) else meta_t
 
 def _extract_translation(d: dict) -> str:
-    # либо строкой, либо через results[].content
     if isinstance(d.get("translation"), str) and d["translation"].strip():
         return d["translation"].strip()
     meta = d.get("metadata") or {}
@@ -497,7 +650,6 @@ async def start_sm(label: str, want_translation: bool):
                         await TM.on_translation_chunk(label, tr)
 
                 elif m == "AddPartialTranslation":
-                    # отключены (мы не просим partial), игнор
                     pass
 
                 elif m == "Error":
@@ -525,7 +677,6 @@ async def start_sm(label: str, want_translation: bool):
             await ws.send(json.dumps({"message": "EndOfStream", "last_seq_no": 0}))
         with contextlib.suppress(Exception):
             await ws.close()
-        # дать таймауту закрытия освободить квоту и транспорт
         await asyncio.sleep(0.3)
 
     return ws, reader, send_audio_chunk, finish, recognition_started, first_error
@@ -592,20 +743,20 @@ def _is_translation_schema_error(err_type: str, reason: str) -> bool:
     return ("translation_config" in r and "not allowed" in r) or ("translation" in r and "invalid" in r)
 
 async def _close_reader_and_ws(sess, reader_task):
-    # sess: (name, ws, r, send, fin, started, err)
     with contextlib.suppress(Exception):
         await sess[4]()  # fin()
     with contextlib.suppress(Exception):
         reader_task.cancel()
-        await asyncio.sleep(0)  # дать таску отмениться
+        await asyncio.sleep(0)
 
 # ------------------- main -------------------
 COALESCE: Coalescer | None = None
 LIVE: LiveManager | None = None
 TM: TranslationManager | None = None
+SM: SuggestionManager | None = None
 
 async def main():
-    global LIVE, TM, COALESCE
+    global LIVE, TM, COALESCE, SM
     await head_line(f"[INFO] Лог файл: {LOG_PATH}")
 
     # S1
@@ -631,6 +782,7 @@ async def main():
     # UI и менеджеры
     LIVE = LiveManager(use_rich=True);   await LIVE.start()
     TM   = TranslationManager(LIVE);     await TM.start()
+    SM   = SuggestionManager();          await SM.start()
     COALESCE = Coalescer(LIVE, TM);      await COALESCE.start()
 
     # 1) старт RT-сессий (с попыткой перевода при флаге)
@@ -641,12 +793,12 @@ async def main():
         sessions.append(("S1",) + (await start_sm("S1", ENABLE_TRANSLATION)))
     if not sessions:
         await head_line("[ERROR] Нет активных сессий (оба канала отключены). Включите CAPTURE_S1 и/или CAPTURE_S2.")
-        await COALESCE.stop(); await TM.stop(); await LIVE.stop()
+        await COALESCE.stop(); await TM.stop(); await SM.stop(); await LIVE.stop()
         return
 
     reader_tasks = [asyncio.create_task(s[2]()) for s in sessions]
 
-    # 2) ждём старта/фоллбэк без перевода при необходимости (и с паузой для освобождения квоты)
+    # 2) ждём старта/фоллбэк без перевода
     active = []
     for i, s in enumerate(sessions):
         name, ws, r, send, fin, started, err = s
@@ -666,7 +818,7 @@ async def main():
 
         if do_retry:
             await _close_reader_and_ws(s, reader_tasks[i])
-            await asyncio.sleep(0.8)  # дать квоте освободиться
+            await asyncio.sleep(0.8)
             ws2, r2, send2, fin2, started2, err2 = await start_sm(name, False)
             sessions[i] = (name, ws2, r2, send2, fin2, started2, err2)
             reader_tasks[i] = asyncio.create_task(r2())
@@ -676,16 +828,15 @@ async def main():
                 active.append(sessions[i])
             else:
                 await head_line(f"[ERROR] {name}: повторный старт без перевода не удался ({st2}: {info2}).")
-        # если не do_retry — канал считаем упавшим
 
     if not active:
         await head_line("[ERROR] Ни одна RT-сессия не запустилась. Проверьте ключ/квоты/сеть и перезапустите.")
         for t in reader_tasks:
             with contextlib.suppress(Exception): t.cancel()
-        await COALESCE.stop(); await TM.stop(); await LIVE.stop()
+        await COALESCE.stop(); await TM.stop(); await SM.stop(); await LIVE.stop()
         return
 
-    # 3) квоты (на случай async-ошибок после старта)
+    # 3) квоты
     still = []
     for s in active:
         name, ws, r, send, fin, started, err = s
@@ -699,7 +850,7 @@ async def main():
         await head_line("[ERROR] quota_exceeded для всех сессий. Закройте висящие RT-сессии и перезапустите.")
         for t in reader_tasks:
             with contextlib.suppress(Exception): t.cancel()
-        await COALESCE.stop(); await TM.stop(); await LIVE.stop()
+        await COALESCE.stop(); await TM.stop(); await SM.stop(); await LIVE.stop()
         return
 
     # 4) выбираем sink для S2
@@ -719,7 +870,7 @@ async def main():
                 with contextlib.suppress(Exception): await s[4]()
             for t in reader_tasks:
                 with contextlib.suppress(Exception): t.cancel()
-            await COALESCE.stop(); await TM.stop(); await LIVE.stop()
+            await COALESCE.stop(); await TM.stop(); await SM.stop(); await LIVE.stop()
             return
         await info_line(f"[S2] выбран sink: {actual_s2}")
 
@@ -745,9 +896,8 @@ async def main():
         with contextlib.suppress(Exception): await s[4]()  # fin
     for t in reader_tasks + tasks:
         with contextlib.suppress(Exception): t.cancel()
-    # дать сетевым транспортам корректно схлопнуться
     await asyncio.sleep(0.2)
-    await COALESCE.stop(); await TM.stop(); await LIVE.stop()
+    await COALESCE.stop(); await TM.stop(); await SM.stop(); await LIVE.stop()
 
 if __name__ == "__main__":
     try:
