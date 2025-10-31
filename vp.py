@@ -35,7 +35,6 @@ if not API_KEY:
     sys.exit(1)
 
 DEBUG  = ENV.get("DEBUG", "0").lower() in ("1","true","yes")
-ENABLE_TRANSLATION = ENV.get("ENABLE_TRANSLATION", "0").lower() in ("1","true","yes")
 SM_ENDPOINT = ENV.get("SPEECHMATICS_WSS", "wss://eu2.rt.speechmatics.com/v2/")
 
 SAMPLE_RATE = int(ENV.get("SAMPLE_RATE", "16000"))
@@ -44,14 +43,17 @@ MAX_DELAY = float(ENV.get("MAX_DELAY", "1.3"))
 MAX_DELAY_MODE = ENV.get("MAX_DELAY_MODE", "flexible")
 EOU_SILENCE = float(ENV.get("EOU_SILENCE", "0.8"))
 
-# анти-спам/троттлинг
-PARTIAL_DEBOUNCE_MS = int(ENV.get("PARTIAL_DEBOUNCE_MS", "300"))  # 200–400 мс — частота перерисовки ливе
+# live-троттлинг/эвристики
+PARTIAL_DEBOUNCE_MS = int(ENV.get("PARTIAL_DEBOUNCE_MS", "300"))
 MIN_DELTA_CHARS     = int(ENV.get("MIN_DELTA_CHARS", "8"))
 MIN_WORDS_PARTIAL   = int(ENV.get("MIN_WORDS_PARTIAL", "2"))
-# принудительная дорисовка ливе при тишине (не фиксирует в истории)
 SILENCE_FLUSH_MS    = int(ENV.get("SILENCE_FLUSH_MS", "700"))
-# время «тишины» для финализации реплики в историю
 EOU_FINALIZE_MS     = int(ENV.get("EOU_FINALIZE_MS", "1100"))
+
+# перевод (только финалы)
+ENABLE_TRANSLATION     = ENV.get("ENABLE_TRANSLATION", "0").lower() in ("1","true","yes")
+TRANSLATE_TO           = (ENV.get("TRANSLATE_TO", "ru") or "ru").strip().lower()
+TRANSLATION_WINDOW_MS  = int(ENV.get("TRANSLATION_WINDOW_MS", "2000"))
 
 PRINT_AUDIOADDED    = ENV.get("PRINT_AUDIOADDED", "0").lower() in ("1","true","yes")
 
@@ -96,16 +98,14 @@ async def head_line(s: str):
 
 # ------------------- Live UI -------------------
 class LiveManager:
-    """
-    Две «живые» строки (S1/S2) в футере. История печатается отдельно.
-    """
+    """Две «живые» строки (S1/S2) в футере. История печатается отдельно."""
     def __init__(self, use_rich: bool):
         self.use_rich = HAVE_RICH and use_rich and sys.stdout.isatty()
         self.console = Console(highlight=False, soft_wrap=False) if HAVE_RICH else None
         self.live = None
         self.active = False
-        self._footer_state = {"S1":"", "S2":""}       # отрисовано
-        self._footer_buffer = {"S1":"", "S2":""}      # последняя версия
+        self._footer_state = {"S1":"", "S2":""}
+        self._footer_buffer = {"S1":"", "S2":""}
         self._footer_last_seen_ms = {"S1":0.0, "S2":0.0}
         self._footer_last_render_ms = {"S1":0.0, "S2":0.0}
         self._flusher_task = None
@@ -142,11 +142,9 @@ class LiveManager:
         if self.use_rich and self.live:
             self.live.update(self._render_footer())
         else:
-            # упрощенный фолбэк
             print(f"{DIM}[LIVE] S1: {self._footer_state['S1'] or '…'} | S2: {self._footer_state['S2'] or '…'}{RESET}", flush=True)
 
     async def _silence_flusher(self):
-        # дорисовать ливе при тишине (не фиксация!)
         try:
             while True:
                 await asyncio.sleep(0.1)
@@ -165,14 +163,12 @@ class LiveManager:
             pass
 
     async def show_live_text(self, label: str, text: str):
-        # троттлинг + дельта + пунктуация
         now_ms = time.monotonic() * 1000.0
         last_drawn = self._footer_state[label]
         grew = (len(text) - len(last_drawn)) >= MIN_DELTA_CHARS
         punct = bool(_re.search(r"[.!?…]$", text))
         debounce_ok = (now_ms - self._footer_last_render_ms[label]) >= PARTIAL_DEBOUNCE_MS
 
-        # обновляем буфер «видели»
         self._footer_buffer[label] = text
         self._footer_last_seen_ms[label] = now_ms
 
@@ -187,35 +183,101 @@ class LiveManager:
         self._footer_last_render_ms[label] = time.monotonic() * 1000.0
         await self._update_footer_now()
 
-    async def print_final_with_extras(self, label: str, text: str):
+    async def print_final_with_extras(self, label: str, text: str, tr_text: str | None = None):
         await print_and_log(f"{ts()} | {label}: {text}")
-        await print_and_log(f"{ts()} | {label} → RU: —")
+        if ENABLE_TRANSLATION:
+            if tr_text and tr_text.strip():
+                await print_and_log(f"{ts()} | {label} → RU: {tr_text.strip()}")
+            else:
+                await print_and_log(f"{ts()} | {label} → RU: —")
         await print_and_log(f"{ts()} | SUGGEST: —")
 
+# ------------------- менеджер перевода -------------------
+class TranslationManager:
+    """
+    Копит финальные AddTranslation и печатает их пост-фактум, если не успели к моменту фиксации реплики.
+    Ничего не блокирует.
+    """
+    def __init__(self, live: LiveManager):
+        self.live = live
+        self._parts = {"S1": [], "S2": []}
+        self._pending = {"S1": None, "S2": None}  # {"deadline_ms":..., "printed":bool}
+        self._watch_task = None
+
+    def _joined(self, label: str) -> str:
+        txt = " ".join(p.strip() for p in self._parts[label] if p and p.strip())
+        return _re.sub(r"\s+", " ", txt).strip()
+
+    async def start(self):
+        if ENABLE_TRANSLATION:
+            self._watch_task = asyncio.create_task(self._watchdog())
+
+    async def stop(self):
+        if self._watch_task:
+            self._watch_task.cancel()
+            with contextlib.suppress(Exception): await self._watch_task
+
+    async def on_translation_chunk(self, label: str, text: str):
+        if not ENABLE_TRANSLATION or not text:
+            return
+        self._parts[label].append(text)
+        pend = self._pending[label]
+        if pend and not pend["printed"] and (time.monotonic() * 1000.0) <= pend["deadline_ms"]:
+            tr = self._joined(label)
+            if tr:
+                await print_and_log(f"{ts()} | {label} → RU: {tr}")
+                pend["printed"] = True
+                self._parts[label].clear()
+
+    async def on_utterance_finalized(self, label: str) -> str | None:
+        if not ENABLE_TRANSLATION:
+            return None
+        now_ms = time.monotonic() * 1000.0
+        tr_now = self._joined(label)
+        if tr_now:
+            self._parts[label].clear()
+            self._pending[label] = None
+            return tr_now
+        self._pending[label] = {"deadline_ms": now_ms + TRANSLATION_WINDOW_MS, "printed": False}
+        return None
+
+    async def on_new_utterance_started(self, label: str):
+        self._pending[label] = None
+        self._parts[label].clear()
+
+    async def _watchdog(self):
+        try:
+            while True:
+                await asyncio.sleep(0.1)
+                now_ms = time.monotonic() * 1000.0
+                for label in ("S1","S2"):
+                    pend = self._pending[label]
+                    if not pend:
+                        continue
+                    if pend["printed"] or now_ms > pend["deadline_ms"]:
+                        self._pending[label] = None
+                        self._parts[label].clear()
+        except asyncio.CancelledError:
+            pass
+
 LIVE: LiveManager | None = None
+TM: TranslationManager | None = None
 
 # ------------------- Коалесцер реплик -------------------
 class Coalescer:
-    """
-    Склеивает множество мелких AddTranscript + партиалы в одну «реплику».
-    Фиксирует в историю при паузе тишины EOU_FINALIZE_MS или по сильной пунктуации.
-    """
-    PUNCT_EOU_RE = _re.compile(r"[.!?…]\s*$")
-
-    def __init__(self, live: LiveManager):
+    def __init__(self, live: LiveManager, tm: TranslationManager | None):
         self.live = live
-        self._parts = {"S1":[], "S2":[]}            # финализированные сегменты текущей реплики (но ещё не зафиксированы в истории)
-        self._partial = {"S1":"", "S2":""}          # текущий партиал
-        self._last_activity = {"S1":0.0, "S2":0.0}  # время последнего события (partial/final)
+        self.tm = tm
+        self._parts = {"S1":[], "S2":[]}
+        self._partial = {"S1":"", "S2":""}
+        self._last_activity = {"S1":0.0, "S2":0.0}
         self._watch_task = None
 
     def _joined(self, label: str) -> str:
         parts = self._parts[label][:]
         if self._partial[label]:
             parts.append(self._partial[label])
-        # аккуратно склеиваем с одинарными пробелами
         txt = " ".join(p.strip() for p in parts if p.strip())
-        # убираем двойные пробелы
         return _re.sub(r"\s+", " ", txt).strip()
 
     async def start(self):
@@ -225,25 +287,23 @@ class Coalescer:
         if self._watch_task:
             self._watch_task.cancel()
             with contextlib.suppress(Exception): await self._watch_task
-        # финальный сброс, если что-то осталось
         for label in ("S1","S2"):
             await self._finalize_if_needed(label, force=True)
 
     async def on_partial(self, label: str, text: str):
+        if not self._parts[label] and not self._partial[label]:
+            if TM:
+                await TM.on_new_utterance_started(label)
         self._partial[label] = text or ""
         self._last_activity[label] = time.monotonic() * 1000.0
         await self.live.show_live_text(label, self._joined(label))
 
     async def on_final_chunk(self, label: str, text: str):
-        # Speechmatics прислал AddTranscript — считаем это «надёжный сегмент текущей реплики», но НЕ финализируем историю сразу.
         if text:
             self._parts[label].append(text)
-        self._partial[label] = ""  # текущий партиал обнулить
+        self._partial[label] = ""
         self._last_activity[label] = time.monotonic() * 1000.0
         await self.live.show_live_text(label, self._joined(label))
-
-        # Если в куске видна сильная пунктуация — можно ускорить фиксацию при более короткой паузе.
-        # Реальную фиксацию всё равно делает watchdog после паузы.
 
     async def _watchdog(self):
         try:
@@ -254,7 +314,6 @@ class Coalescer:
                     last = self._last_activity[label]
                     if last <= 0:
                         continue
-                    # если давно не было событий и есть что фиксировать — фиксируем
                     if (now_ms - last) >= EOU_FINALIZE_MS:
                         await self._finalize_if_needed(label, force=False)
         except asyncio.CancelledError:
@@ -264,14 +323,14 @@ class Coalescer:
         txt = self._joined(label)
         if not txt:
             return
-        # при force — фиксируем всегда; иначе — разумная эвристика (пунктуация или просто истекла пауза)
-        if force or len(txt) >= 1:
-            await self.live.clear_live_line(label)
-            await self.live.print_final_with_extras(label, txt)
-            # сброс
-            self._parts[label].clear()
-            self._partial[label] = ""
-            self._last_activity[label] = 0.0
+        tr_now = None
+        if TM:
+            tr_now = await TM.on_utterance_finalized(label)
+        await self.live.clear_live_line(label)
+        await self.live.print_final_with_extras(label, txt, tr_text=tr_now)
+        self._parts[label].clear()
+        self._partial[label] = ""
+        self._last_activity[label] = 0.0
 
 # ------------------- PipeWire helpers -------------------
 def run_cmd(cmd):
@@ -336,7 +395,7 @@ async def wait_for_sink(mode_or_name: str, timeout_sec=180):
 
 # --- Инициализация устройств S1/S2 ---
 S1_DEVICE = ENV.get("S1_DEVICE") or find_hyperx_mic()
-S2_TARGET = ENV.get("S2_TARGET") or ""  # AUTO_* или конкретное имя
+S2_TARGET = ENV.get("S2_TARGET") or ""
 
 # ------------------- Speechmatics helpers -------------------
 async def connect_ws(url, headers):
@@ -345,7 +404,7 @@ async def connect_ws(url, headers):
     except TypeError:
         return await websockets.connect(url, extra_headers=headers, max_size=None)
 
-def _text_from_results(d: dict) -> str:
+def _text_from_transcript_results(d: dict) -> str:
     words = []
     for r in d.get("results", []):
         alts = r.get("alternatives", [])
@@ -356,14 +415,24 @@ def _text_from_results(d: dict) -> str:
 
 def _extract_transcript(d: dict) -> str:
     meta_t = (d.get("metadata") or {}).get("transcript") or ""
-    res_t  = _text_from_results(d)
+    res_t  = _text_from_transcript_results(d)
     return res_t if len(res_t) > len(meta_t) else meta_t
 
 def _extract_translation(d: dict) -> str:
+    # либо строкой, либо через results[].content
+    if isinstance(d.get("translation"), str) and d["translation"].strip():
+        return d["translation"].strip()
     meta = d.get("metadata") or {}
-    return d.get("translation") or meta.get("translation") or ""
+    if isinstance(meta.get("translation"), str) and meta["translation"].strip():
+        return meta["translation"].strip()
+    words = []
+    for r in d.get("results", []):
+        c = r.get("content", "")
+        if c:
+            words.append(c)
+    return " ".join(words).strip()
 
-async def start_sm(label: str):
+async def start_sm(label: str, want_translation: bool):
     headers = [("Authorization", f"Bearer {API_KEY}")]
     ws = await connect_ws(SM_ENDPOINT, headers)
 
@@ -377,14 +446,21 @@ async def start_sm(label: str):
         "conversation_config": {"end_of_utterance_silence_trigger": EOU_SILENCE},
         "audio_filtering_config": {"volume_threshold": 0},
     }
-    if ENABLE_TRANSLATION:
-        transcription_config["translation_config"] = {"target_languages": ["ru"], "enable_partials": True}
 
-    await ws.send(json.dumps({
+    payload = {
         "message": "StartRecognition",
         "audio_format": {"type": "raw", "encoding": ENCODING, "sample_rate": SAMPLE_RATE},
         "transcription_config": transcription_config
-    }))
+    }
+
+    # ВАЖНО: translation_config — на верхнем уровне, а не внутри transcription_config
+    if want_translation:
+        payload["translation_config"] = {
+            "target_languages": [TRANSLATE_TO],
+            "enable_partials": False
+        }
+
+    await ws.send(json.dumps(payload))
 
     recognition_started = asyncio.Event()
     first_error = {"type": None, "reason": None}
@@ -412,11 +488,16 @@ async def start_sm(label: str):
                         continue
                     if m == "AddPartialTranscript":
                         await COALESCE.on_partial(label, txt)
-                    else:  # AddTranscript
+                    else:
                         await COALESCE.on_final_chunk(label, txt)
 
-                elif m in ("AddPartialTranslation", "AddTranslation"):
-                    # перевод пока не выводим (заглушки печатаются при фиксации реплики)
+                elif m == "AddTranslation":
+                    tr = _extract_translation(data)
+                    if tr and TM:
+                        await TM.on_translation_chunk(label, tr)
+
+                elif m == "AddPartialTranslation":
+                    # отключены (мы не просим partial), игнор
                     pass
 
                 elif m == "Error":
@@ -444,6 +525,8 @@ async def start_sm(label: str):
             await ws.send(json.dumps({"message": "EndOfStream", "last_seq_no": 0}))
         with contextlib.suppress(Exception):
             await ws.close()
+        # дать таймауту закрытия освободить квоту и транспорт
+        await asyncio.sleep(0.3)
 
     return ws, reader, send_audio_chunk, finish, recognition_started, first_error
 
@@ -490,11 +573,39 @@ async def run_pw_record(cmd, on_chunk, label):
         with contextlib.suppress(Exception): t_stat.cancel()
         await info_line(f"[{label}] stopped")
 
+# ------------------- утилиты старта/фоллбэка -------------------
+async def _wait_start_or_error(label, started_evt, err_box, timeout=8.0):
+    t0 = time.monotonic()
+    while True:
+        if started_evt.is_set():
+            return "started", None
+        if err_box.get("type"):
+            return "error", (err_box.get("type"), err_box.get("reason"))
+        if (time.monotonic() - t0) > timeout:
+            return "timeout", None
+        await asyncio.sleep(0.05)
+
+def _is_translation_schema_error(err_type: str, reason: str) -> bool:
+    if not reason:
+        return False
+    r = reason.lower()
+    return ("translation_config" in r and "not allowed" in r) or ("translation" in r and "invalid" in r)
+
+async def _close_reader_and_ws(sess, reader_task):
+    # sess: (name, ws, r, send, fin, started, err)
+    with contextlib.suppress(Exception):
+        await sess[4]()  # fin()
+    with contextlib.suppress(Exception):
+        reader_task.cancel()
+        await asyncio.sleep(0)  # дать таску отмениться
+
 # ------------------- main -------------------
 COALESCE: Coalescer | None = None
+LIVE: LiveManager | None = None
+TM: TranslationManager | None = None
 
 async def main():
-    global LIVE, COALESCE
+    global LIVE, TM, COALESCE
     await head_line(f"[INFO] Лог файл: {LOG_PATH}")
 
     # S1
@@ -517,110 +628,129 @@ async def main():
 
     await head_line("[INFO] В звонке выберите маршрут Bluetooth на телефоне: jupiter-Asp")
 
-    # Live UI
-    LIVE = LiveManager(use_rich=True)
-    await LIVE.start()
+    # UI и менеджеры
+    LIVE = LiveManager(use_rich=True);   await LIVE.start()
+    TM   = TranslationManager(LIVE);     await TM.start()
+    COALESCE = Coalescer(LIVE, TM);      await COALESCE.start()
 
-    # Коалесцер реплик
-    COALESCE = Coalescer(LIVE)
-    await COALESCE.start()
-
-    # 1) WS-сессии
-    sessions = []  # (name, ws, reader, send, fin, started, err)
-
+    # 1) старт RT-сессий (с попыткой перевода при флаге)
+    sessions = []
     if CAPTURE_S2:
-        ws2, r2, send2, fin2, started2, err2 = await start_sm("S2")
-        sessions.append(("S2", ws2, r2, send2, fin2, started2, err2))
-
+        sessions.append(("S2",) + (await start_sm("S2", ENABLE_TRANSLATION)))
     if cap_s1:
-        ws1, r1, send1, fin1, started1, err1 = await start_sm("S1")
-        sessions.append(("S1", ws1, r1, send1, fin1, started1, err1))
-
+        sessions.append(("S1",) + (await start_sm("S1", ENABLE_TRANSLATION)))
     if not sessions:
         await head_line("[ERROR] Нет активных сессий (оба канала отключены). Включите CAPTURE_S1 и/или CAPTURE_S2.")
-        await COALESCE.stop()
-        await LIVE.stop()
+        await COALESCE.stop(); await TM.stop(); await LIVE.stop()
         return
 
     reader_tasks = [asyncio.create_task(s[2]()) for s in sessions]
-    await asyncio.wait({asyncio.create_task(s[5].wait()) for s in sessions}, return_when=asyncio.ALL_COMPLETED)
 
-    # 2) Квоты
+    # 2) ждём старта/фоллбэк без перевода при необходимости (и с паузой для освобождения квоты)
     active = []
-    for s in sessions:
+    for i, s in enumerate(sessions):
         name, ws, r, send, fin, started, err = s
-        if err.get("type") == "quota_exceeded":
-            await head_line(f"[FALLBACK] {name} отклонён квотой — отключаю.")
-            with contextlib.suppress(Exception):
-                await s[4]()  # fin
-        else:
-            active.append(s)
+        st, info = await _wait_start_or_error(name, started, err, timeout=8.0)
+        if st == "started":
+            active.append(s); continue
 
+        do_retry = False
+        if st == "error":
+            et, rsn = info
+            await head_line(f"[{name}] Старт не удался: {et} — {rsn}")
+            if et == "protocol_error" and _is_translation_schema_error(et, rsn):
+                do_retry = True
+        elif st == "timeout" and ENABLE_TRANSLATION:
+            await head_line(f"[{name}] Timeout ожидания RecognitionStarted — пробую без перевода…")
+            do_retry = True
+
+        if do_retry:
+            await _close_reader_and_ws(s, reader_tasks[i])
+            await asyncio.sleep(0.8)  # дать квоте освободиться
+            ws2, r2, send2, fin2, started2, err2 = await start_sm(name, False)
+            sessions[i] = (name, ws2, r2, send2, fin2, started2, err2)
+            reader_tasks[i] = asyncio.create_task(r2())
+            st2, info2 = await _wait_start_or_error(name, started2, err2, timeout=8.0)
+            if st2 == "started":
+                await head_line(f"[FALLBACK] {name}: перевода нет, работаем без него.")
+                active.append(sessions[i])
+            else:
+                await head_line(f"[ERROR] {name}: повторный старт без перевода не удался ({st2}: {info2}).")
+        # если не do_retry — канал считаем упавшим
+
+    if not active:
+        await head_line("[ERROR] Ни одна RT-сессия не запустилась. Проверьте ключ/квоты/сеть и перезапустите.")
+        for t in reader_tasks:
+            with contextlib.suppress(Exception): t.cancel()
+        await COALESCE.stop(); await TM.stop(); await LIVE.stop()
+        return
+
+    # 3) квоты (на случай async-ошибок после старта)
+    still = []
+    for s in active:
+        name, ws, r, send, fin, started, err = s
+        if (err.get("type") or "").lower() == "quota_exceeded":
+            await head_line(f"[FALLBACK] {name} отклонён квотой — отключаю.")
+            with contextlib.suppress(Exception): await fin()
+        else:
+            still.append(s)
+    active = still
     if not active:
         await head_line("[ERROR] quota_exceeded для всех сессий. Закройте висящие RT-сессии и перезапустите.")
         for t in reader_tasks:
             with contextlib.suppress(Exception): t.cancel()
-        await COALESCE.stop()
-        await LIVE.stop()
+        await COALESCE.stop(); await TM.stop(); await LIVE.stop()
         return
 
-    # 3) S2: выбираем sink
+    # 4) выбираем sink для S2
     tasks = []
-    have_S2 = any(s[0] == "S2" for s in active)
-
+    have_S2 = any(s[0]=="S2" for s in active)
     actual_s2 = None
     if have_S2:
         mode = S2_TARGET or "AUTO_DEFAULT_SINK"
-        if mode in ("AUTO_DEFAULT_SINK", "AUTO_BT_SINK", "AUTO_ALSA_SINK"):
-            await info_line(f"[S2] режим {mode} — выбираю соответствующий sink…")
+        if mode in ("AUTO_DEFAULT_SINK","AUTO_BT_SINK","AUTO_ALSA_SINK"):
+            await info_line(f"[S2] режим {mode} — выбираю sink…")
         else:
             await info_line(f"[S2] ожидаемый sink: {mode}")
-
         actual_s2 = await wait_for_sink(mode, timeout_sec=180)
         if not actual_s2:
-            await head_line("[ERROR] Не удалось найти подходящий sink для S2. Подключите наушники/выход и повторите.")
+            await head_line("[ERROR] Не удалось найти подходящий sink для S2.")
             for s in active:
-                with contextlib.suppress(Exception): await s[4]()  # fin
+                with contextlib.suppress(Exception): await s[4]()
             for t in reader_tasks:
                 with contextlib.suppress(Exception): t.cancel()
-            await COALESCE.stop()
-            await LIVE.stop()
+            await COALESCE.stop(); await TM.stop(); await LIVE.stop()
             return
         await info_line(f"[S2] выбран sink: {actual_s2}")
 
-    # 4) Запускаем захваты
+    # 5) старт захвата
     for s in active:
         name, ws, r, send, fin, started, err = s
         if name == "S2":
-            cmd = [
-                "pw-record", "--target", actual_s2,
-                "--properties", "stream.capture.sink=true",
-                "--format", "s16", "--channels", "1",
-                "--rate", str(SAMPLE_RATE), "-"
-            ]
+            cmd = ["pw-record","--target",actual_s2,"--properties","stream.capture.sink=true",
+                   "--format","s16","--channels","1","--rate",str(SAMPLE_RATE),"-"]
             tasks.append(asyncio.create_task(run_pw_record(cmd, send, "S2_capture")))
         elif name == "S1":
-            cmd = [
-                "pw-record", "--target", S1_DEVICE,
-                "--format", "s16", "--channels", "1",
-                "--rate", str(SAMPLE_RATE), "-"
-            ]
+            cmd = ["pw-record","--target",S1_DEVICE,"--format","s16","--channels","1","--rate",str(SAMPLE_RATE),"-"]
             tasks.append(asyncio.create_task(run_pw_record(cmd, send, "S1_capture")))
 
-    # 5) Завершение по Ctrl+C
+    # 6) завершение по Ctrl+C
     stop = asyncio.Event()
     def _sig(*_): stop.set()
     for sgn in (signal.SIGINT, signal.SIGTERM): signal.signal(sgn, _sig)
     await stop.wait()
 
-    # 6) Закрытие
+    # 7) закрытие
     for s in active:
         with contextlib.suppress(Exception): await s[4]()  # fin
     for t in reader_tasks + tasks:
         with contextlib.suppress(Exception): t.cancel()
-    await COALESCE.stop()
-    await LIVE.stop()
+    # дать сетевым транспортам корректно схлопнуться
+    await asyncio.sleep(0.2)
+    await COALESCE.stop(); await TM.stop(); await LIVE.stop()
 
 if __name__ == "__main__":
-    try: asyncio.run(main())
-    except KeyboardInterrupt: pass
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass
