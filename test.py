@@ -71,3 +71,13 @@ async def run():
 
 if __name__ == "__main__":
     asyncio.run(run())
+
+
+# # убить все висящие vp.py
+# pkill -f 'python.*vp\.py' || true
+
+# # убедиться, что ничего не осталось
+# ps -ef | grep -E 'vp\.py|speechmatics|websockets' | grep -v grep || true
+
+# # на всякий случай подождать ~15-30 сек, пока сервер сам дропнет старые WS
+# sleep 20

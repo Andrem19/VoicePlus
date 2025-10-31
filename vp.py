@@ -4,6 +4,17 @@
 import os, sys, asyncio, json, signal, datetime as dt, subprocess, contextlib, time, re as _re
 import websockets
 
+# ====== (опционально красиво) rich ======
+HAVE_RICH = True
+try:
+    from rich.console import Console
+    from rich.live import Live
+    from rich.table import Table
+    from rich.panel import Panel
+    from rich.text import Text
+except Exception:
+    HAVE_RICH = False
+
 # ------------------- конфиг / окружение -------------------
 def load_env(path=".env"):
     cfg = {}
@@ -33,10 +44,15 @@ MAX_DELAY = float(ENV.get("MAX_DELAY", "1.3"))
 MAX_DELAY_MODE = ENV.get("MAX_DELAY_MODE", "flexible")
 EOU_SILENCE = float(ENV.get("EOU_SILENCE", "0.8"))
 
-# анти-спам партиалов
-PARTIAL_DEBOUNCE_MS = int(ENV.get("PARTIAL_DEBOUNCE_MS", "700"))
+# анти-спам/троттлинг
+PARTIAL_DEBOUNCE_MS = int(ENV.get("PARTIAL_DEBOUNCE_MS", "300"))  # 200–400 мс — частота перерисовки ливе
 MIN_DELTA_CHARS     = int(ENV.get("MIN_DELTA_CHARS", "8"))
 MIN_WORDS_PARTIAL   = int(ENV.get("MIN_WORDS_PARTIAL", "2"))
+# принудительная дорисовка ливе при тишине (не фиксирует в истории)
+SILENCE_FLUSH_MS    = int(ENV.get("SILENCE_FLUSH_MS", "700"))
+# время «тишины» для финализации реплики в историю
+EOU_FINALIZE_MS     = int(ENV.get("EOU_FINALIZE_MS", "1100"))
+
 PRINT_AUDIOADDED    = ENV.get("PRINT_AUDIOADDED", "0").lower() in ("1","true","yes")
 
 # управление захватом линий
@@ -48,7 +64,7 @@ LOG_DIR = os.path.expanduser("call_logs"); os.makedirs(LOG_DIR, exist_ok=True)
 LOG_PATH = os.path.join(LOG_DIR, f"call_{dt.datetime.now():%Y%m%d_%H%M%S}.log")
 def ts(): return dt.datetime.now().strftime("%H:%M:%S")
 
-# ------------------- вывод (цвета) -------------------
+# ------------------- вывод (цвета / утилиты) -------------------
 def _supports_color():
     return sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
 USE_COLOR = _supports_color()
@@ -59,37 +75,203 @@ GRN   = "\033[32m" if USE_COLOR else ""
 CYAN  = "\033[36m" if USE_COLOR else ""
 ITAL  = "\033[3m"  if USE_COLOR else ""
 ANSI_RE = _re.compile(r"\x1b\[[0-9;]*m")
-
 def strip_ansi(s: str) -> str: return ANSI_RE.sub("", s)
 _print_lock = asyncio.Lock()
 
-def _fmt_label(label: str) -> str:
-    if label == "S1": return f"{RED}S1{RESET}" if USE_COLOR else "S1"
-    if label == "S2": return f"{GRN}S2{RESET}" if USE_COLOR else "S2"
-    return label
-
 async def print_and_log(line: str):
     async with _print_lock:
-        print(line, flush=True)
+        if LIVE and LIVE.use_rich and LIVE.console:
+            LIVE.console.print(line)
+        else:
+            print(line, flush=True)
         with open(LOG_PATH, "a", encoding="utf-8") as f:
             f.write(strip_ansi(line) + "\n")
 
 async def info_line(s: str):
     if DEBUG:
-        await print_and_log(f"{DIM}{s}{RESET}" if USE_COLOR else s)
+        await print_and_log(f"{DIM}{s}{RESET}" if not (LIVE and LIVE.use_rich) else s)
 
 async def head_line(s: str):
-    await print_and_log(f"{CYAN}{s}{RESET}" if USE_COLOR else s)
+    await print_and_log(f"{CYAN}{s}{RESET}" if not (LIVE and LIVE.use_rich) else s)
 
-async def say_line(label: str, text: str, partial: bool):
-    tag = _fmt_label(label)
-    suf = f" {ITAL}…(partial){RESET}" if (partial and USE_COLOR) else (" …(partial)" if partial else "")
-    await print_and_log(f"{ts()} | {tag}: {text}{suf}")
+# ------------------- Live UI -------------------
+class LiveManager:
+    """
+    Две «живые» строки (S1/S2) в футере. История печатается отдельно.
+    """
+    def __init__(self, use_rich: bool):
+        self.use_rich = HAVE_RICH and use_rich and sys.stdout.isatty()
+        self.console = Console(highlight=False, soft_wrap=False) if HAVE_RICH else None
+        self.live = None
+        self.active = False
+        self._footer_state = {"S1":"", "S2":""}       # отрисовано
+        self._footer_buffer = {"S1":"", "S2":""}      # последняя версия
+        self._footer_last_seen_ms = {"S1":0.0, "S2":0.0}
+        self._footer_last_render_ms = {"S1":0.0, "S2":0.0}
+        self._flusher_task = None
 
-async def say_tr_line(label: str, text: str, partial: bool):
-    tag = _fmt_label(label)
-    suf = f" {ITAL}…(partial){RESET}" if (partial and USE_COLOR) else (" …(partial)" if partial else "")
-    await print_and_log(f"{ts()} | {tag} → RU: {text}{suf}")
+    def _render_footer(self):
+        s1 = self._footer_state["S1"] or "…"
+        s2 = self._footer_state["S2"] or "…"
+        if HAVE_RICH:
+            table = Table.grid(padding=(0,1))
+            table.add_row(Text("LIVE S1:", style="bold red"),   Text(s1))
+            table.add_row(Text("LIVE S2:", style="bold green"), Text(s2))
+            return Panel(table, title="Live", border_style="cyan")
+        return f"[LIVE]\nS1: {s1}\nS2: {s2}\n"
+
+    async def start(self):
+        self.active = True
+        if self.use_rich:
+            self.live = Live(self._render_footer(), console=self.console, refresh_per_second=8, transient=False)
+            self.live.start()
+        self._flusher_task = asyncio.create_task(self._silence_flusher())
+
+    async def stop(self):
+        self.active = False
+        if self._flusher_task:
+            self._flusher_task.cancel()
+            with contextlib.suppress(Exception): await self._flusher_task
+        if self.use_rich and self.live:
+            self.live.stop()
+            self.live = None
+
+    async def _update_footer_now(self):
+        if not self.active:
+            return
+        if self.use_rich and self.live:
+            self.live.update(self._render_footer())
+        else:
+            # упрощенный фолбэк
+            print(f"{DIM}[LIVE] S1: {self._footer_state['S1'] or '…'} | S2: {self._footer_state['S2'] or '…'}{RESET}", flush=True)
+
+    async def _silence_flusher(self):
+        # дорисовать ливе при тишине (не фиксация!)
+        try:
+            while True:
+                await asyncio.sleep(0.1)
+                now_ms = time.monotonic() * 1000.0
+                for label in ("S1","S2"):
+                    buf = self._footer_buffer[label]
+                    seen = self._footer_last_seen_ms[label]
+                    rend = self._footer_last_render_ms[label]
+                    if not buf:
+                        continue
+                    if buf != self._footer_state[label] and (now_ms - seen) >= SILENCE_FLUSH_MS and (now_ms - rend) >= 50:
+                        self._footer_state[label] = buf
+                        self._footer_last_render_ms[label] = now_ms
+                        await self._update_footer_now()
+        except asyncio.CancelledError:
+            pass
+
+    async def show_live_text(self, label: str, text: str):
+        # троттлинг + дельта + пунктуация
+        now_ms = time.monotonic() * 1000.0
+        last_drawn = self._footer_state[label]
+        grew = (len(text) - len(last_drawn)) >= MIN_DELTA_CHARS
+        punct = bool(_re.search(r"[.!?…]$", text))
+        debounce_ok = (now_ms - self._footer_last_render_ms[label]) >= PARTIAL_DEBOUNCE_MS
+
+        # обновляем буфер «видели»
+        self._footer_buffer[label] = text
+        self._footer_last_seen_ms[label] = now_ms
+
+        if (grew and debounce_ok) or punct:
+            self._footer_state[label] = text
+            self._footer_last_render_ms[label] = now_ms
+            await self._update_footer_now()
+
+    async def clear_live_line(self, label: str):
+        self._footer_state[label] = ""
+        self._footer_buffer[label] = ""
+        self._footer_last_render_ms[label] = time.monotonic() * 1000.0
+        await self._update_footer_now()
+
+    async def print_final_with_extras(self, label: str, text: str):
+        await print_and_log(f"{ts()} | {label}: {text}")
+        await print_and_log(f"{ts()} | {label} → RU: —")
+        await print_and_log(f"{ts()} | SUGGEST: —")
+
+LIVE: LiveManager | None = None
+
+# ------------------- Коалесцер реплик -------------------
+class Coalescer:
+    """
+    Склеивает множество мелких AddTranscript + партиалы в одну «реплику».
+    Фиксирует в историю при паузе тишины EOU_FINALIZE_MS или по сильной пунктуации.
+    """
+    PUNCT_EOU_RE = _re.compile(r"[.!?…]\s*$")
+
+    def __init__(self, live: LiveManager):
+        self.live = live
+        self._parts = {"S1":[], "S2":[]}            # финализированные сегменты текущей реплики (но ещё не зафиксированы в истории)
+        self._partial = {"S1":"", "S2":""}          # текущий партиал
+        self._last_activity = {"S1":0.0, "S2":0.0}  # время последнего события (partial/final)
+        self._watch_task = None
+
+    def _joined(self, label: str) -> str:
+        parts = self._parts[label][:]
+        if self._partial[label]:
+            parts.append(self._partial[label])
+        # аккуратно склеиваем с одинарными пробелами
+        txt = " ".join(p.strip() for p in parts if p.strip())
+        # убираем двойные пробелы
+        return _re.sub(r"\s+", " ", txt).strip()
+
+    async def start(self):
+        self._watch_task = asyncio.create_task(self._watchdog())
+
+    async def stop(self):
+        if self._watch_task:
+            self._watch_task.cancel()
+            with contextlib.suppress(Exception): await self._watch_task
+        # финальный сброс, если что-то осталось
+        for label in ("S1","S2"):
+            await self._finalize_if_needed(label, force=True)
+
+    async def on_partial(self, label: str, text: str):
+        self._partial[label] = text or ""
+        self._last_activity[label] = time.monotonic() * 1000.0
+        await self.live.show_live_text(label, self._joined(label))
+
+    async def on_final_chunk(self, label: str, text: str):
+        # Speechmatics прислал AddTranscript — считаем это «надёжный сегмент текущей реплики», но НЕ финализируем историю сразу.
+        if text:
+            self._parts[label].append(text)
+        self._partial[label] = ""  # текущий партиал обнулить
+        self._last_activity[label] = time.monotonic() * 1000.0
+        await self.live.show_live_text(label, self._joined(label))
+
+        # Если в куске видна сильная пунктуация — можно ускорить фиксацию при более короткой паузе.
+        # Реальную фиксацию всё равно делает watchdog после паузы.
+
+    async def _watchdog(self):
+        try:
+            while True:
+                await asyncio.sleep(0.05)
+                now_ms = time.monotonic() * 1000.0
+                for label in ("S1","S2"):
+                    last = self._last_activity[label]
+                    if last <= 0:
+                        continue
+                    # если давно не было событий и есть что фиксировать — фиксируем
+                    if (now_ms - last) >= EOU_FINALIZE_MS:
+                        await self._finalize_if_needed(label, force=False)
+        except asyncio.CancelledError:
+            pass
+
+    async def _finalize_if_needed(self, label: str, force: bool):
+        txt = self._joined(label)
+        if not txt:
+            return
+        # при force — фиксируем всегда; иначе — разумная эвристика (пунктуация или просто истекла пауза)
+        if force or len(txt) >= 1:
+            await self.live.clear_live_line(label)
+            await self.live.print_final_with_extras(label, txt)
+            # сброс
+            self._parts[label].clear()
+            self._partial[label] = ""
+            self._last_activity[label] = 0.0
 
 # ------------------- PipeWire helpers -------------------
 def run_cmd(cmd):
@@ -104,29 +286,19 @@ def list_node_names():
     out = run_cmd(["wpctl","status","--name"])
     return _re.findall(r'([A-Za-z0-9_.:-]+)\s*$', out, flags=_re.M)
 
-def find_first_bluez_output():
-    for n in list_node_names():
-        if n.startswith("bluez_output."): return n
-    return ""
-
 def find_bt_sink_any():
-    # первый доступный bluetooth sink
-    names = list_node_names()
-    for n in names:
+    for n in list_node_names():
         if n.startswith("bluez_output."):
             return n
     return ""
 
 def find_alsa_sink_any():
-    # первый доступный alsa sink (проводной/USB/HDMI)
-    names = list_node_names()
-    for n in names:
+    for n in list_node_names():
         if n.startswith("alsa_output."):
             return n
     return ""
 
 def get_default_sink_name():
-    # берём имя дефолтного sink через inspect
     out = run_cmd(["wpctl", "inspect", "@DEFAULT_AUDIO_SINK@"])
     m = _re.search(r'node\.name\s*=\s*"([^"]+)"', out)
     return m.group(1) if m else ""
@@ -141,16 +313,7 @@ def find_hyperx_mic():
     return ""
 
 async def wait_for_sink(mode_or_name: str, timeout_sec=180):
-    """
-    Ожидаем появление нужного sink:
-      - "AUTO_DEFAULT_SINK" : текущий дефолт (@DEFAULT_AUDIO_SINK@)
-      - "AUTO_BT_SINK"      : первый bluez_output.*
-      - "AUTO_ALSA_SINK"    : первый alsa_output.*
-      - <конкретное_имя>    : точное совпадение
-    Возвращает имя sink или "" при таймауте.
-    """
     t0 = dt.datetime.now()
-
     def pick():
         if mode_or_name == "AUTO_DEFAULT_SINK":
             return get_default_sink_name() or ""
@@ -158,16 +321,11 @@ async def wait_for_sink(mode_or_name: str, timeout_sec=180):
             return find_bt_sink_any()
         if mode_or_name == "AUTO_ALSA_SINK":
             return find_alsa_sink_any()
-        # точное имя
         names = list_node_names()
         return mode_or_name if mode_or_name and mode_or_name in names else ""
-
-    # мгновенная попытка
     n0 = pick()
     if n0:
         return n0
-
-    # ожидание
     while True:
         cand = pick()
         if cand:
@@ -176,38 +334,9 @@ async def wait_for_sink(mode_or_name: str, timeout_sec=180):
             return ""
         await asyncio.sleep(0.3)
 
-# --- Инициализация устройств S1/S2 (S1 сразу, S2 выбираем позже по режиму) ---
+# --- Инициализация устройств S1/S2 ---
 S1_DEVICE = ENV.get("S1_DEVICE") or find_hyperx_mic()
-S2_TARGET = ENV.get("S2_TARGET") or ""  # может быть именем или AUTO_* режимом
-
-# ------------------- частичная печать: состояние -------------------
-_last_partial_text = {"S1":"","S2":"","S1→RU":"","S2→RU":""}
-_last_partial_time = {"S1":0.0,"S2":0.0,"S1→RU":0.0,"S2→RU":0.0}
-_punct_re = _re.compile(r"[.!?…]$")
-
-def _word_count(s: str) -> int:
-    return len([w for w in s.strip().split() if w])
-
-def _should_print_partial(label: str, txt: str) -> bool:
-    now = time.monotonic() * 1000.0
-    last_txt = _last_partial_text.get(label, "")
-    last_ts  = _last_partial_time.get(label, 0.0)
-
-    if not txt: return False
-    grew = (len(txt) - len(last_txt)) >= MIN_DELTA_CHARS
-    enough_words = _word_count(txt) >= MIN_WORDS_PARTIAL
-    punct = bool(_punct_re.search(txt))
-    debounce_ok = (now - last_ts) >= PARTIAL_DEBOUNCE_MS
-
-    if (grew and enough_words and debounce_ok) or punct:
-        _last_partial_text[label] = txt
-        _last_partial_time[label] = now
-        return True
-    return False
-
-def _reset_partial(label: str):
-    _last_partial_text[label] = ""
-    _last_partial_time[label] = time.monotonic() * 1000.0
+S2_TARGET = ENV.get("S2_TARGET") or ""  # AUTO_* или конкретное имя
 
 # ------------------- Speechmatics helpers -------------------
 async def connect_ws(url, headers):
@@ -282,23 +411,13 @@ async def start_sm(label: str):
                     if not txt:
                         continue
                     if m == "AddPartialTranscript":
-                        if _should_print_partial(label, txt):
-                            await say_line(label, txt, partial=True)
-                    else:
-                        await say_line(label, txt, partial=False)
-                        _reset_partial(label)
+                        await COALESCE.on_partial(label, txt)
+                    else:  # AddTranscript
+                        await COALESCE.on_final_chunk(label, txt)
 
                 elif m in ("AddPartialTranslation", "AddTranslation"):
-                    tr = _extract_translation(data)
-                    if not tr:
-                        continue
-                    lab = f"{label}→RU"
-                    if m == "AddPartialTranslation":
-                        if _should_print_partial(lab, tr):
-                            await say_tr_line(label, tr, partial=True)
-                    else:
-                        await say_tr_line(label, tr, partial=False)
-                        _reset_partial(lab)
+                    # перевод пока не выводим (заглушки печатаются при фиксации реплики)
+                    pass
 
                 elif m == "Error":
                     first_error["type"] = data.get("type")
@@ -318,7 +437,7 @@ async def start_sm(label: str):
             await info_line(f"[{label}] reader exception: {e}")
 
     async def send_audio_chunk(chunk: bytes):
-        await ws.send(chunk)  # бинарные кадры
+        await ws.send(chunk)
 
     async def finish():
         with contextlib.suppress(Exception):
@@ -346,9 +465,9 @@ async def run_pw_record(cmd, on_chunk, label):
             if s: await info_line(f"[{label}][pw-record] {s}")
 
     async def stats2():
+        nonlocal last_t
         while True:
             await asyncio.sleep(1.0)
-            nonlocal last_t
             now = time.monotonic()
             dt_s = max(1e-6, now - last_t)
             kbps = (_bytes_box[0] / 1024.0) / dt_s
@@ -372,7 +491,10 @@ async def run_pw_record(cmd, on_chunk, label):
         await info_line(f"[{label}] stopped")
 
 # ------------------- main -------------------
+COALESCE: Coalescer | None = None
+
 async def main():
+    global LIVE, COALESCE
     await head_line(f"[INFO] Лог файл: {LOG_PATH}")
 
     # S1
@@ -387,7 +509,7 @@ async def main():
         cap_s1 = False
         await head_line("[INFO] S1 отключён (CAPTURE_S1=0).")
 
-    # S2 — что будем захватывать
+    # S2
     if CAPTURE_S2:
         await head_line(f"[INFO] S2_TARGET (режим/имя) = {S2_TARGET or 'AUTO_DEFAULT_SINK'}")
     else:
@@ -395,7 +517,15 @@ async def main():
 
     await head_line("[INFO] В звонке выберите маршрут Bluetooth на телефоне: jupiter-Asp")
 
-    # 1) Поднимаем нужные WS-потоки и ждём RecognitionStarted
+    # Live UI
+    LIVE = LiveManager(use_rich=True)
+    await LIVE.start()
+
+    # Коалесцер реплик
+    COALESCE = Coalescer(LIVE)
+    await COALESCE.start()
+
+    # 1) WS-сессии
     sessions = []  # (name, ws, reader, send, fin, started, err)
 
     if CAPTURE_S2:
@@ -408,6 +538,8 @@ async def main():
 
     if not sessions:
         await head_line("[ERROR] Нет активных сессий (оба канала отключены). Включите CAPTURE_S1 и/или CAPTURE_S2.")
+        await COALESCE.stop()
+        await LIVE.stop()
         return
 
     reader_tasks = [asyncio.create_task(s[2]()) for s in sessions]
@@ -420,7 +552,7 @@ async def main():
         if err.get("type") == "quota_exceeded":
             await head_line(f"[FALLBACK] {name} отклонён квотой — отключаю.")
             with contextlib.suppress(Exception):
-                await fin()
+                await s[4]()  # fin
         else:
             active.append(s)
 
@@ -428,9 +560,11 @@ async def main():
         await head_line("[ERROR] quota_exceeded для всех сессий. Закройте висящие RT-сессии и перезапустите.")
         for t in reader_tasks:
             with contextlib.suppress(Exception): t.cancel()
+        await COALESCE.stop()
+        await LIVE.stop()
         return
 
-    # 3) S2: определяем sink
+    # 3) S2: выбираем sink
     tasks = []
     have_S2 = any(s[0] == "S2" for s in active)
 
@@ -449,6 +583,8 @@ async def main():
                 with contextlib.suppress(Exception): await s[4]()  # fin
             for t in reader_tasks:
                 with contextlib.suppress(Exception): t.cancel()
+            await COALESCE.stop()
+            await LIVE.stop()
             return
         await info_line(f"[S2] выбран sink: {actual_s2}")
 
@@ -482,6 +618,8 @@ async def main():
         with contextlib.suppress(Exception): await s[4]()  # fin
     for t in reader_tasks + tasks:
         with contextlib.suppress(Exception): t.cancel()
+    await COALESCE.stop()
+    await LIVE.stop()
 
 if __name__ == "__main__":
     try: asyncio.run(main())
