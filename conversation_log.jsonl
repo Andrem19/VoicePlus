@@ -1,35 +1,275 @@
-{"ts": "2025-10-30T03:14:30.088Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "tgt_lang": "ru", "text": "Hello?", "translation": "Эй?"}
-{"ts": "2025-10-30T03:14:35.673Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "tgt_lang": "ru", "text": "How are you?", "translation": "Как ты?"}
-{"ts": "2025-10-30T03:14:42.551Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "tgt_lang": "ru", "text": "I'm alright.", "translation": "Я в порядке."}
-{"ts": "2025-10-30T03:17:52.572Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "tgt_lang": "ru", "text": "below.", "translation": "ниже."}
-{"ts": "2025-10-30T03:17:57.061Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "tgt_lang": "ru", "text": "you", "translation": "Ты"}
-{"ts": "2025-10-30T03:18:03.047Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "tgt_lang": "ru", "text": "I am alright.", "translation": "Я в порядке."}
-{"ts": "2025-10-30T03:22:51.763Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "tgt_lang": "ru", "text": "You all right?", "translation": "Ты в порядке?"}
-{"ts": "2025-10-30T03:23:14.859Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "tgt_lang": "ru", "text": "Hey, I'm still here.", "translation": "Эй, я все еще здесь."}
-{"ts": "2025-10-30T03:35:34.611Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "tgt_lang": "ru", "text": "The Lomeran.", "translation": "Ломеран."}
-{"ts": "2025-10-30T03:40:06.429Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "tgt_lang": "ru", "text": "Hello.", "translation": "Привет."}
-{"ts": "2025-10-30T03:40:09.122Z", "type": "suggestion", "model": "llama3.2:1b", "to_say_en": "Hello."}
-{"ts": "2025-10-30T03:40:11.928Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "tgt_lang": "ru", "text": "I want to speak with you.", "translation": "Я хочу поговорить с тобой."}
-{"ts": "2025-10-30T03:40:12.882Z", "type": "suggestion", "model": "llama3.2:1b", "to_say_en": "I'm available. How can I assist you?"}
-{"ts": "2025-10-30T03:40:22.642Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "tgt_lang": "ru", "text": "I'm available, how can I assist you?", "translation": "Я свободен, чем могу помочь?"}
-{"ts": "2025-10-30T03:40:23.578Z", "type": "suggestion", "model": "llama3.2:1b", "to_say_en": "I'm available, how can I assist you?"}
-{"ts": "2025-10-30T03:40:39.990Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "tgt_lang": "ru", "text": "I want you just to tell with me.", "translation": "Я хочу, чтобы ты рассказала мне."}
-{"ts": "2025-10-30T03:40:40.922Z", "type": "suggestion", "model": "llama3.2:1b", "to_say_en": "I'm here. What's on your mind?"}
-{"ts": "2025-10-30T03:40:54.285Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "tgt_lang": "ru", "text": "I'm here, what's on your mind?", "translation": "Я здесь, что у тебя на уме?"}
-{"ts": "2025-10-30T03:40:55.226Z", "type": "suggestion", "model": "llama3.2:1b", "to_say_en": "I'm here. What's on your mind?"}
-{"ts": "2025-10-30T03:41:19.799Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "tgt_lang": "ru", "text": "It's time go to bed.", "translation": "Пора ложиться спать."}
-{"ts": "2025-10-30T03:41:20.420Z", "type": "suggestion", "model": "llama3.2:1b", "to_say_en": "It's time to sleep."}
-{"ts": "2025-10-30T03:41:59.494Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "tgt_lang": "ru", "text": "One to hear customer support opening hour.", "translation": "Один, чтобы послушать поддержку клиентов."}
-{"ts": "2025-10-30T03:42:10.716Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "tgt_lang": "ru", "text": "Press 2 if you're reporting an urgent issue at 1 o'clock.", "translation": "Нажмите 2, если вы сообщаете о срочной проблеме в час."}
-{"ts": "2025-10-30T03:42:13.763Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "tgt_lang": "ru", "text": "Customer support opening now.", "translation": "Сейчас открывается поддержка клиента."}
-{"ts": "2025-10-30T03:42:19.719Z", "type": "suggestion", "model": "llama3.2:1b", "to_say_en": "Customer support opening now."}
-{"ts": "2025-10-30T03:46:52.007Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "tgt_lang": "ru", "text": "How can I tell you?", "translation": "Как я могу тебе сказать?"}
-{"ts": "2025-10-30T03:46:54.394Z", "type": "suggestion", "model": "mistral:latest", "to_say_en": "\"By speaking or typing your message.\""}
-{"ts": "2025-10-30T03:47:05.573Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "tgt_lang": "ru", "text": "I want to speak with you.", "translation": "Я хочу поговорить с тобой."}
-{"ts": "2025-10-30T03:47:07.673Z", "type": "suggestion", "model": "mistral:latest", "to_say_en": "Sure, let's chat!"}
-{"ts": "2025-10-30T03:47:15.964Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "tgt_lang": "ru", "text": "Sure, let's go.", "translation": "Конечно, пойдем."}
-{"ts": "2025-10-30T03:47:18.040Z", "type": "suggestion", "model": "mistral:latest", "to_say_en": "Let's start talking now."}
-{"ts": "2025-10-30T03:47:33.755Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "tgt_lang": "ru", "text": "really late time.", "translation": "Очень поздно."}
-{"ts": "2025-10-30T03:47:44.357Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "tgt_lang": "ru", "text": "We need to go to bed.", "translation": "Нам нужно ложиться спать."}
-{"ts": "2025-10-30T03:48:09.536Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "tgt_lang": "ru", "text": "But I don't want to sleep.", "translation": "Но я не хочу спать."}
-{"ts": "2025-10-30T03:48:12.606Z", "type": "suggestion", "model": "mistral:latest", "to_say_en": "It's okay, let's chat then!"}
+{"ts": "2025-10-30T16:15:06.643Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "tgt_lang": "ru", "text": "Andrew speaking. I'm calling to ask about getting a smart", "translation": "Эндрю, я звоню, чтобы спросить о том, чтобы стать умным."}
+{"ts": "2025-10-30T16:15:28.467Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "tgt_lang": "ru", "text": "Installed at my property.", "translation": "Взято у моей собственности."}
+{"ts": "2025-10-30T16:18:24.999Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "tgt_lang": "ru", "text": "This is Andrew speaking.", "translation": "Говорит Эндрю."}
+{"ts": "2025-10-30T16:18:44.056Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "tgt_lang": "ru", "text": "I'm calling to ask about getting a smart meter installed at my-", "translation": "Я звоню, чтобы спросить о том, чтобы установить умный счетчик в моем..."}
+{"ts": "2025-10-30T16:18:48.664Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "tgt_lang": "ru", "text": "just bring up your account.", "translation": "Просто займись своим счетом."}
+{"ts": "2025-10-30T16:27:15.404Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "Thank you.", "dt_asr_s": 2.764}
+{"ts": "2025-10-30T16:27:15.489Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "Thank you.", "translation": "Спасибо."}
+{"ts": "2025-10-30T16:27:18.019Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "you", "dt_asr_s": 2.612}
+{"ts": "2025-10-30T16:27:23.789Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "ru", "text": "Спасибо.", "dt_asr_s": 2.948}
+{"ts": "2025-10-30T16:27:33.802Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "Thank you.", "dt_asr_s": 2.641}
+{"ts": "2025-10-30T16:28:42.312Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "This is Andrew speaking", "dt_asr_s": 2.755}
+{"ts": "2025-10-30T16:28:42.526Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "This is Andrew speaking", "translation": "Говорит Эндрю."}
+{"ts": "2025-10-30T16:28:46.407Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "I'm calling to ask about getting a smart.", "dt_asr_s": 4.091}
+{"ts": "2025-10-30T16:28:49.777Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "installed at my-", "dt_asr_s": 3.369}
+{"ts": "2025-10-30T16:28:52.962Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "Thank you.", "dt_asr_s": 3.183}
+{"ts": "2025-10-30T16:28:56.211Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "Go down.", "dt_asr_s": 3.248}
+{"ts": "2025-10-30T16:29:00.291Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "Sure, it's 12 Clifton Road.", "dt_asr_s": 4.078}
+{"ts": "2025-10-30T16:29:03.408Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "Thanks.", "dt_asr_s": 3.116}
+{"ts": "2025-10-30T16:29:06.967Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "Just bring up your account.", "dt_asr_s": 3.558}
+{"ts": "2025-10-30T16:29:10.440Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "Can I also-", "dt_asr_s": 3.471}
+{"ts": "2025-10-30T16:29:23.899Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "Thank you.", "dt_asr_s": 4.077}
+{"ts": "2025-10-30T16:36:03.537Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "Polite UK English.", "dt_asr_s": 3.11}
+{"ts": "2025-10-30T16:36:03.654Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "Polite UK English.", "translation": "Политизированный английский."}
+{"ts": "2025-10-30T16:36:26.716Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "This is Andrew speaking.", "dt_asr_s": 3.448}
+{"ts": "2025-10-30T16:36:26.851Z", "type": "translation", "speaker": "S2", "src_lang": "en", "tgt_lang": "ru", "text": "This is Andrew speaking.", "translation": "Говорит Эндрю."}
+{"ts": "2025-10-30T16:36:38.044Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "I'm calling to ask about getting a smart meter installed.", "dt_asr_s": 11.014}
+{"ts": "2025-10-30T16:36:38.380Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "I'm calling to ask about getting a smart meter installed.", "translation": "Я звоню, чтобы спросить о том, чтобы установить умный счетчик."}
+{"ts": "2025-10-30T16:36:41.678Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "Can I take your full address please?", "dt_asr_s": 3.63}
+{"ts": "2025-10-30T16:36:41.907Z", "type": "translation", "speaker": "S2", "src_lang": "en", "tgt_lang": "ru", "text": "Can I take your full address please?", "translation": "Могу я взять ваш полный адрес, пожалуйста?"}
+{"ts": "2025-10-30T16:37:01.495Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "12 Clifton Road, Blackpool.", "dt_asr_s": 19.813}
+{"ts": "2025-10-30T16:37:01.729Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "12 Clifton Road, Blackpool.", "translation": "12 Клифтон Роуд, Блэкпул."}
+{"ts": "2025-10-30T16:37:08.257Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "Polite UK English.", "dt_asr_s": 2.947}
+{"ts": "2025-10-30T16:37:08.373Z", "type": "translation", "speaker": "S2", "src_lang": "en", "tgt_lang": "ru", "text": "Polite UK English.", "translation": "Политизированный английский."}
+{"ts": "2025-10-30T16:37:43.619Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "Thank you.", "dt_asr_s": 3.126}
+{"ts": "2025-10-30T16:37:43.817Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "Thank you.", "translation": "Спасибо."}
+{"ts": "2025-10-30T16:37:50.680Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "Polite UK English.", "dt_asr_s": 3.0}
+{"ts": "2025-10-30T16:37:50.896Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "Polite UK English.", "translation": "Политизированный английский."}
+{"ts": "2025-10-30T16:42:09.924Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "this is", "dt_asr_s": 1.626}
+{"ts": "2025-10-30T16:42:10.017Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "this is", "translation": "Это"}
+{"ts": "2025-10-30T16:42:11.662Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "Andrew speaking", "dt_asr_s": 1.735}
+{"ts": "2025-10-30T16:42:11.791Z", "type": "translation", "speaker": "S2", "src_lang": "en", "tgt_lang": "ru", "text": "Andrew speaking", "translation": "Говорит Эндрю."}
+{"ts": "2025-10-30T16:42:16.207Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "I'm calling to ask about getting a smart meter installed at my property", "dt_asr_s": 3.028}
+{"ts": "2025-10-30T16:42:16.502Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "I'm calling to ask about getting a smart meter installed at my property", "translation": "Я звоню, чтобы спросить о том, чтобы установить умный счетчик в моей собственности."}
+{"ts": "2025-10-30T16:42:17.868Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "Andrew.", "dt_asr_s": 1.655}
+{"ts": "2025-10-30T16:42:18.059Z", "type": "translation", "speaker": "S2", "src_lang": "en", "tgt_lang": "ru", "text": "Andrew.", "translation": "Эндрю."}
+{"ts": "2025-10-30T16:42:20.000Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "you've reached green spark energy", "dt_asr_s": 2.121}
+{"ts": "2025-10-30T16:42:20.160Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "you've reached green spark energy", "translation": "Вы достигли зелёной энергии искры"}
+{"ts": "2025-10-30T16:42:23.399Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "Can I take your full address please?", "dt_asr_s": 2.3}
+{"ts": "2025-10-30T16:42:23.561Z", "type": "translation", "speaker": "S2", "src_lang": "en", "tgt_lang": "ru", "text": "Can I take your full address please?", "translation": "Могу я взять ваш полный адрес, пожалуйста?"}
+{"ts": "2025-10-30T16:42:27.065Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "Sure, it's 12 Clifton Road, Blackpool.", "dt_asr_s": 2.846}
+{"ts": "2025-10-30T16:42:27.374Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "Sure, it's 12 Clifton Road, Blackpool.", "translation": "Конечно, это 12 Клифтон Роуд, Блэкпул."}
+{"ts": "2025-10-30T16:42:28.970Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "FY43HX.", "dt_asr_s": 1.902}
+{"ts": "2025-10-30T16:42:29.085Z", "type": "translation", "speaker": "S2", "src_lang": "en", "tgt_lang": "ru", "text": "FY43HX.", "translation": "43 километра."}
+{"ts": "2025-10-30T16:42:30.610Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "Thank you.", "dt_asr_s": 1.635}
+{"ts": "2025-10-30T16:42:30.728Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "Thank you.", "translation": "Спасибо."}
+{"ts": "2025-10-30T16:42:32.947Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "Let me just bring up your account.", "dt_asr_s": 2.334}
+{"ts": "2025-10-30T16:42:33.135Z", "type": "translation", "speaker": "S2", "src_lang": "en", "tgt_lang": "ru", "text": "Let me just bring up your account.", "translation": "Позволь мне рассказать о твоем счете."}
+{"ts": "2025-10-30T16:42:39.918Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "yes I can see your supply details here can I also confirm the account holders full name and date of birth", "dt_asr_s": 3.957}
+{"ts": "2025-10-30T16:42:40.304Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "yes I can see your supply details here can I also confirm the account holders full name and date of birth", "translation": "Да, я вижу ваши данные, могу ли я подтвердить владельцам счетов полное имя и дату рождения?"}
+{"ts": "2025-10-30T16:42:41.724Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "for security purposes.", "dt_asr_s": 1.803}
+{"ts": "2025-10-30T16:42:41.816Z", "type": "translation", "speaker": "S2", "src_lang": "en", "tgt_lang": "ru", "text": "for security purposes.", "translation": "для целей безопасности."}
+{"ts": "2025-10-30T16:43:42.109Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "This is Andrew speaking.", "dt_asr_s": 1.981}
+{"ts": "2025-10-30T16:43:42.257Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "This is Andrew speaking.", "translation": "Говорит Эндрю."}
+{"ts": "2025-10-30T16:43:44.198Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "I'm calling to ask about", "dt_asr_s": 2.084}
+{"ts": "2025-10-30T16:43:44.373Z", "type": "translation", "speaker": "S2", "src_lang": "en", "tgt_lang": "ru", "text": "I'm calling to ask about", "translation": "Я звоню, чтобы спросить о"}
+{"ts": "2025-10-30T16:43:56.414Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "getting smart meters.", "dt_asr_s": 12.212}
+{"ts": "2025-10-30T16:43:56.659Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "getting smart meters.", "translation": "Становится умным счетчиком."}
+{"ts": "2025-10-30T16:44:00.108Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "please.", "dt_asr_s": 3.692}
+{"ts": "2025-10-30T16:44:00.220Z", "type": "translation", "speaker": "S2", "src_lang": "en", "tgt_lang": "ru", "text": "please.", "translation": "Пожалуйста."}
+{"ts": "2025-10-30T16:44:02.003Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "14386.", "dt_asr_s": 1.892}
+{"ts": "2025-10-30T16:44:02.091Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "14386.", "translation": "14386."}
+{"ts": "2025-10-30T16:44:04.286Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "Let me just bring up your account.", "dt_asr_s": 2.275}
+{"ts": "2025-10-30T16:44:04.542Z", "type": "translation", "speaker": "S2", "src_lang": "en", "tgt_lang": "ru", "text": "Let me just bring up your account.", "translation": "Позволь мне рассказать о твоем счете."}
+{"ts": "2025-10-30T16:44:21.938Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "Yes, I see your supply detail.", "dt_asr_s": 17.648}
+{"ts": "2025-10-30T16:44:22.112Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "Yes, I see your supply detail.", "translation": "Да, я вижу ваше предложение."}
+{"ts": "2025-10-30T16:45:16.952Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "This is", "dt_asr_s": 1.742}
+{"ts": "2025-10-30T16:45:17.024Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "This is", "translation": "Это"}
+{"ts": "2025-10-30T16:45:18.691Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "Andrew speaking", "dt_asr_s": 1.735}
+{"ts": "2025-10-30T16:45:18.815Z", "type": "translation", "speaker": "S2", "src_lang": "en", "tgt_lang": "ru", "text": "Andrew speaking", "translation": "Говорит Эндрю."}
+{"ts": "2025-10-30T16:45:22.243Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "I'm calling to ask about getting a smart meter installed at", "dt_asr_s": 2.672}
+{"ts": "2025-10-30T16:45:22.491Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "I'm calling to ask about getting a smart meter installed at", "translation": "Я звоню, чтобы спросить о том, чтобы установить умный счетчик в"}
+{"ts": "2025-10-30T16:45:24.534Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "and address.", "dt_asr_s": 2.063}
+{"ts": "2025-10-30T16:45:24.606Z", "type": "translation", "speaker": "S2", "src_lang": "en", "tgt_lang": "ru", "text": "and address.", "translation": "и адрес."}
+{"ts": "2025-10-30T16:45:26.862Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "you've reached green spark energy", "dt_asr_s": 2.071}
+{"ts": "2025-10-30T16:45:27.040Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "you've reached green spark energy", "translation": "Вы достигли зелёной энергии искры"}
+{"ts": "2025-10-30T16:45:28.945Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "Happy to help with that.", "dt_asr_s": 2.08}
+{"ts": "2025-10-30T16:45:29.151Z", "type": "translation", "speaker": "S2", "src_lang": "en", "tgt_lang": "ru", "text": "Happy to help with that.", "translation": "С радостью помогу с этим."}
+{"ts": "2025-10-30T16:45:31.314Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "Can I take your full address please?", "dt_asr_s": 2.365}
+{"ts": "2025-10-30T16:45:31.491Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "Can I take your full address please?", "translation": "Могу я взять ваш полный адрес, пожалуйста?"}
+{"ts": "2025-10-30T16:45:33.346Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "sure it's 12", "dt_asr_s": 2.029}
+{"ts": "2025-10-30T16:45:33.501Z", "type": "translation", "speaker": "S2", "src_lang": "en", "tgt_lang": "ru", "text": "sure it's 12", "translation": "Конечно, 12."}
+{"ts": "2025-10-30T16:45:35.538Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "Clifton Road, Blackpool", "dt_asr_s": 2.189}
+{"ts": "2025-10-30T16:45:35.793Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "Clifton Road, Blackpool", "translation": "Клифтон-роуд, Блэкпул"}
+{"ts": "2025-10-30T16:45:37.441Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "FY43HX", "dt_asr_s": 1.9}
+{"ts": "2025-10-30T16:45:37.614Z", "type": "translation", "speaker": "S2", "src_lang": "en", "tgt_lang": "ru", "text": "FY43HX", "translation": "43ГГц"}
+{"ts": "2025-10-30T16:45:39.740Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "Let me just bring up your account.", "dt_asr_s": 2.292}
+{"ts": "2025-10-30T16:45:39.925Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "Let me just bring up your account.", "translation": "Позволь мне рассказать о твоем счете."}
+{"ts": "2025-10-30T16:45:46.504Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "yes I can see your supply details here can I also confirm the account holders full name and date of birth", "dt_asr_s": 3.972}
+{"ts": "2025-10-30T16:45:46.892Z", "type": "translation", "speaker": "S2", "src_lang": "en", "tgt_lang": "ru", "text": "yes I can see your supply details here can I also confirm the account holders full name and date of birth", "translation": "Да, я вижу ваши данные, могу ли я подтвердить владельцам счетов полное имя и дату рождения?"}
+{"ts": "2025-10-30T16:45:48.431Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "for security purposes.", "dt_asr_s": 1.923}
+{"ts": "2025-10-30T16:45:48.522Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "for security purposes.", "translation": "для целей безопасности."}
+{"ts": "2025-10-30T16:52:26.809Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "Thank you.", "dt_asr_s": 1.754}
+{"ts": "2025-10-30T16:52:26.889Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "Thank you.", "translation": "Спасибо."}
+{"ts": "2025-10-30T16:52:37.521Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "GreenSpark Energy Clifton Road", "dt_asr_s": 2.441}
+{"ts": "2025-10-30T16:52:37.973Z", "type": "translation", "speaker": "S2", "src_lang": "en", "tgt_lang": "ru", "text": "GreenSpark Energy Clifton Road", "translation": "&lt; &lt; ГринСпарк энерджи клифтон &gt; &gt;"}
+{"ts": "2025-10-30T16:52:46.745Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "morning this is", "dt_asr_s": 9.22}
+{"ts": "2025-10-30T16:52:46.888Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "morning this is", "translation": "Утром"}
+{"ts": "2025-10-30T16:53:01.136Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "at my property", "dt_asr_s": 14.387}
+{"ts": "2025-10-30T16:53:01.234Z", "type": "translation", "speaker": "S2", "src_lang": "en", "tgt_lang": "ru", "text": "at my property", "translation": "в моей собственности"}
+{"ts": "2025-10-30T16:53:03.128Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "thank you let me just", "dt_asr_s": 1.989}
+{"ts": "2025-10-30T16:53:03.324Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "thank you let me just", "translation": "Спасибо, позволь мне"}
+{"ts": "2025-10-30T16:53:05.271Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "yes I can see your support", "dt_asr_s": 2.139}
+{"ts": "2025-10-30T16:53:05.533Z", "type": "translation", "speaker": "S2", "src_lang": "en", "tgt_lang": "ru", "text": "yes I can see your support", "translation": "Да, я вижу вашу поддержку."}
+{"ts": "2025-10-30T16:53:26.328Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "can I also confirm the account holders full name and date of birth", "dt_asr_s": 21.047}
+{"ts": "2025-10-30T16:53:26.585Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "can I also confirm the account holders full name and date of birth", "translation": "Могу ли я также подтвердить владельцам счетов полное имя и дату рождения"}
+{"ts": "2025-10-30T16:53:28.269Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "Thank you.", "dt_asr_s": 1.938}
+{"ts": "2025-10-30T16:53:28.348Z", "type": "translation", "speaker": "S2", "src_lang": "en", "tgt_lang": "ru", "text": "Thank you.", "translation": "Спасибо."}
+{"ts": "2025-10-30T16:53:42.916Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "GreenSpark Energy", "dt_asr_s": 2.059}
+{"ts": "2025-10-30T16:53:43.271Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "GreenSpark Energy", "translation": "Энергетика &quot; ГринСпарк &quot;"}
+{"ts": "2025-10-30T16:53:45.462Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "Thank you.", "dt_asr_s": 2.542}
+{"ts": "2025-10-30T16:53:45.543Z", "type": "translation", "speaker": "S2", "src_lang": "en", "tgt_lang": "ru", "text": "Thank you.", "translation": "Спасибо."}
+{"ts": "2025-10-30T16:54:01.313Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "contact information", "dt_asr_s": 15.116}
+{"ts": "2025-10-30T16:54:01.475Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "contact information", "translation": "контактная информация"}
+{"ts": "2025-10-30T16:54:58.351Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "GreenSpark Energy Clifton Road", "dt_asr_s": 5.224}
+{"ts": "2025-10-30T16:54:58.769Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "GreenSpark Energy Clifton Road", "translation": "&lt; &lt; ГринСпарк энерджи клифтон &gt; &gt;"}
+{"ts": "2025-10-30T16:55:01.599Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "Thank you.", "dt_asr_s": 3.244}
+{"ts": "2025-10-30T16:55:01.681Z", "type": "translation", "speaker": "S2", "src_lang": "en", "tgt_lang": "ru", "text": "Thank you.", "translation": "Спасибо."}
+{"ts": "2025-10-30T16:55:07.945Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "GreenSpark Energy", "dt_asr_s": 3.347}
+{"ts": "2025-10-30T16:55:08.258Z", "type": "translation", "speaker": "S2", "src_lang": "en", "tgt_lang": "ru", "text": "GreenSpark Energy", "translation": "Энергетика &quot; ГринСпарк &quot;"}
+{"ts": "2025-10-30T16:55:18.180Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "this is Andrews", "dt_asr_s": 3.272}
+{"ts": "2025-10-30T16:55:18.349Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "this is Andrews", "translation": "Это Эндрюс."}
+{"ts": "2025-10-30T16:55:20.449Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "I'm calling to ask", "dt_asr_s": 2.266}
+{"ts": "2025-10-30T16:55:20.651Z", "type": "translation", "speaker": "S2", "src_lang": "en", "tgt_lang": "ru", "text": "I'm calling to ask", "translation": "Я звоню, чтобы спросить"}
+{"ts": "2025-10-30T16:55:22.618Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "getting a smart meter installed", "dt_asr_s": 2.165}
+{"ts": "2025-10-30T16:55:22.995Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "getting a smart meter installed", "translation": ":: установка &lt; &lt; умного &gt; &gt; счетчика"}
+{"ts": "2025-10-30T16:55:24.751Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "property", "dt_asr_s": 2.13}
+{"ts": "2025-10-30T16:55:24.832Z", "type": "translation", "speaker": "S2", "src_lang": "en", "tgt_lang": "ru", "text": "property", "translation": "имущество"}
+{"ts": "2025-10-30T16:55:27.240Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "good morning Andrew you free", "dt_asr_s": 2.485}
+{"ts": "2025-10-30T16:55:27.470Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "good morning Andrew you free", "translation": "Доброе утро, Эндрю. Вы свободны."}
+{"ts": "2025-10-30T16:55:29.440Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "GreenSpark Energy", "dt_asr_s": 2.195}
+{"ts": "2025-10-30T16:55:29.768Z", "type": "translation", "speaker": "S2", "src_lang": "en", "tgt_lang": "ru", "text": "GreenSpark Energy", "translation": "Энергетика &quot; ГринСпарк &quot;"}
+{"ts": "2025-10-30T16:55:32.104Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "to help with that kind of thing", "dt_asr_s": 2.659}
+{"ts": "2025-10-30T16:55:32.315Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "to help with that kind of thing", "translation": "чтобы помочь с подобными вещами."}
+{"ts": "2025-10-30T16:55:35.152Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "sure it's 12 Clifton Road", "dt_asr_s": 3.04}
+{"ts": "2025-10-30T16:55:35.381Z", "type": "translation", "speaker": "S2", "src_lang": "en", "tgt_lang": "ru", "text": "sure it's 12 Clifton Road", "translation": "Уверена, что это 12 Клифтон Роуд."}
+{"ts": "2025-10-30T16:55:37.320Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "Blackpool FY4", "dt_asr_s": 2.165}
+{"ts": "2025-10-30T16:55:37.493Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "Blackpool FY4", "translation": "Блэкпул4 (финансовые средства)"}
+{"ts": "2025-10-30T16:55:39.197Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "contact information", "dt_asr_s": 1.874}
+{"ts": "2025-10-30T16:55:39.316Z", "type": "translation", "speaker": "S2", "src_lang": "en", "tgt_lang": "ru", "text": "contact information", "translation": "контактная информация"}
+{"ts": "2025-10-30T16:55:41.962Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "let me just bring up your account", "dt_asr_s": 2.758}
+{"ts": "2025-10-30T16:55:42.260Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "let me just bring up your account", "translation": "Позволь мне рассказать о твоем счете."}
+{"ts": "2025-10-30T16:55:45.194Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "yes I can see your supply details here can I also", "dt_asr_s": 3.224}
+{"ts": "2025-10-30T16:55:45.438Z", "type": "translation", "speaker": "S2", "src_lang": "en", "tgt_lang": "ru", "text": "yes I can see your supply details here can I also", "translation": "Да, я вижу подробности вашего предложения."}
+{"ts": "2025-10-30T16:55:47.087Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "full name", "dt_asr_s": 1.889}
+{"ts": "2025-10-30T16:55:47.214Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "full name", "translation": "полное имя"}
+{"ts": "2025-10-30T16:55:48.890Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "security process", "dt_asr_s": 1.798}
+{"ts": "2025-10-30T16:55:49.012Z", "type": "translation", "speaker": "S2", "src_lang": "en", "tgt_lang": "ru", "text": "security process", "translation": "процесс обеспечения безопасности"}
+{"ts": "2025-10-30T16:55:51.261Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "of course it's Andrew", "dt_asr_s": 2.365}
+{"ts": "2025-10-30T16:55:51.446Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "of course it's Andrew", "translation": "Конечно, это Эндрю."}
+{"ts": "2025-10-30T16:55:53.476Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "born on 16", "dt_asr_s": 2.21}
+{"ts": "2025-10-30T16:55:53.593Z", "type": "translation", "speaker": "S2", "src_lang": "en", "tgt_lang": "ru", "text": "born on 16", "translation": "родилась 16 лет"}
+{"ts": "2025-10-30T16:55:55.367Z", "final": true, "speaker": "S1", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "1989", "dt_asr_s": 1.886}
+{"ts": "2025-10-30T16:55:55.434Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "1989", "translation": "1989 год"}
+{"ts": "2025-10-30T16:55:57.702Z", "final": true, "speaker": "S2", "speaker_conf": 0.5, "speaker_info": {"mode": "alt"}, "src_lang": "en", "text": "MPRN Tariff", "dt_asr_s": 2.328}
+{"ts": "2025-10-30T16:55:57.833Z", "type": "translation", "speaker": "S2", "src_lang": "en", "tgt_lang": "ru", "text": "MPRN Tariff", "translation": "MPRN Тариф"}
+{"ts": "2025-10-30T16:57:43.811Z", "final_raw": true, "speaker": "S1", "src_lang": "en", "text": "contact information", "dt_asr_s": 1.61}
+{"ts": "2025-10-30T16:57:48.804Z", "final_raw": true, "speaker": "S2", "src_lang": "en", "text": "This is Andrew speaking.", "dt_asr_s": 1.822}
+{"ts": "2025-10-30T16:57:48.938Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "contact information", "translation": "контактная информация"}
+{"ts": "2025-10-30T16:57:48.991Z", "type": "translation", "speaker": "S2", "src_lang": "en", "tgt_lang": "ru", "text": "This is Andrew speaking.", "translation": "Говорит Эндрю."}
+{"ts": "2025-10-30T16:58:03.691Z", "final_raw": true, "speaker": "S1", "src_lang": "en", "text": "calling to ask about getting a smart meter installed", "dt_asr_s": 13.949}
+{"ts": "2025-10-30T16:58:03.969Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "calling to ask about getting a smart meter installed", "translation": "Звонил спросить о том, чтобы установить смартметр"}
+{"ts": "2025-10-30T16:58:16.274Z", "final_raw": true, "speaker": "S2", "src_lang": "en", "text": "Shorts 12 at GreenSpark", "dt_asr_s": 12.579}
+{"ts": "2025-10-30T16:58:28.936Z", "final_raw": true, "speaker": "S1", "src_lang": "en", "text": "full name and date of birth", "dt_asr_s": 12.66}
+{"ts": "2025-10-30T16:58:29.130Z", "type": "translation", "speaker": "S2", "src_lang": "en", "tgt_lang": "ru", "text": "Shorts 12 at GreenSpark", "translation": "Шорты 12 в GreenSpark"}
+{"ts": "2025-10-30T16:58:32.048Z", "type": "suggestion", "model": "mistral:latest", "goal": "Book and confirm earliest smart meter installation appointment with access instructions.", "to_say_en": "Thank you for reaching out. Could you please provide me with your account number and preferred installation"}
+{"ts": "2025-10-30T16:58:46.379Z", "final_raw": true, "speaker": "S2", "src_lang": "en", "text": "contact information", "dt_asr_s": 10.037}
+{"ts": "2025-10-30T16:58:46.486Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "full name and date of birth", "translation": "полное имя и дата рождения"}
+{"ts": "2025-10-30T16:58:48.346Z", "type": "suggestion", "model": "mistral:latest", "goal": "Book and confirm earliest smart meter installation appointment with access instructions.", "to_say_en": "To progress towards booking the earliest smart meter installation appointment with access instructions, may I please confirm"}
+{"ts": "2025-10-30T16:59:18.085Z", "type": "translation", "speaker": "S2", "src_lang": "en", "tgt_lang": "ru", "text": "contact information", "translation": "контактная информация"}
+{"ts": "2025-10-30T16:59:52.279Z", "final_raw": true, "speaker": "S1", "src_lang": "en", "text": "This is Andrew speaking.", "dt_asr_s": 2.009}
+{"ts": "2025-10-30T16:59:52.413Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "This is Andrew speaking.", "translation": "Говорит Эндрю."}
+{"ts": "2025-10-30T16:59:55.511Z", "final_raw": true, "speaker": "S2", "src_lang": "en", "text": "calling to ask about getting a smart meter installed", "dt_asr_s": 2.382}
+{"ts": "2025-10-30T16:59:55.732Z", "type": "translation", "speaker": "S2", "src_lang": "en", "tgt_lang": "ru", "text": "calling to ask about getting a smart meter installed", "translation": "Звонил спросить о том, чтобы установить смартметр"}
+{"ts": "2025-10-30T16:59:58.690Z", "final_raw": true, "speaker": "S1", "src_lang": "en", "text": "morning Andrew you reached", "dt_asr_s": 1.82}
+{"ts": "2025-10-30T17:00:01.215Z", "final_raw": true, "speaker": "S2", "src_lang": "en", "text": "I'll be happy to help", "dt_asr_s": 2.106}
+{"ts": "2025-10-30T17:00:01.496Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "morning Andrew you reached", "translation": "Доброе утро, Эндрю."}
+{"ts": "2025-10-30T17:00:03.258Z", "final_raw": true, "speaker": "S1", "src_lang": "en", "text": "can I take your address please", "dt_asr_s": 2.039}
+{"ts": "2025-10-30T17:00:03.378Z", "type": "translation", "speaker": "S2", "src_lang": "en", "tgt_lang": "ru", "text": "I'll be happy to help", "translation": "Я с радостью помогу."}
+{"ts": "2025-10-30T17:00:06.836Z", "final_raw": true, "speaker": "S2", "src_lang": "en", "text": "Shorts 12 Clifton Road Blackpool", "dt_asr_s": 2.327}
+{"ts": "2025-10-30T17:00:07.041Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "can I take your address please", "translation": "Могу я взять ваш адрес, пожалуйста?"}
+{"ts": "2025-10-30T17:00:08.591Z", "final_raw": true, "speaker": "S1", "src_lang": "en", "text": "FY43 HX", "dt_asr_s": 1.751}
+{"ts": "2025-10-30T17:00:08.857Z", "type": "translation", "speaker": "S2", "src_lang": "en", "tgt_lang": "ru", "text": "Shorts 12 Clifton Road Blackpool", "translation": "Шорты 12 Clifton Road Blackpool"}
+{"ts": "2025-10-30T17:00:12.712Z", "final_raw": true, "speaker": "S2", "src_lang": "en", "text": "thank you let me just bring up your account", "dt_asr_s": 2.442}
+{"ts": "2025-10-30T17:00:13.005Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "FY43 HX", "translation": "43 HX (в тыс. долл. США)"}
+{"ts": "2025-10-30T17:00:13.027Z", "type": "translation", "speaker": "S2", "src_lang": "en", "tgt_lang": "ru", "text": "thank you let me just bring up your account", "translation": "Спасибо, позволь мне зачитать твой счёт."}
+{"ts": "2025-10-30T17:00:16.587Z", "final_raw": true, "speaker": "S1", "src_lang": "en", "text": "yes I can see your supply details here can I look", "dt_asr_s": 2.737}
+{"ts": "2025-10-30T17:00:16.845Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "yes I can see your supply details here can I look", "translation": "Да, я вижу подробности вашего предложения."}
+{"ts": "2025-10-30T17:00:18.842Z", "final_raw": true, "speaker": "S2", "src_lang": "en", "text": "account holders full name and date of birth", "dt_asr_s": 2.251}
+{"ts": "2025-10-30T17:00:19.020Z", "type": "translation", "speaker": "S2", "src_lang": "en", "tgt_lang": "ru", "text": "account holders full name and date of birth", "translation": "Полная фамилия и дата рождения владельцев счетов"}
+{"ts": "2025-10-30T17:00:20.589Z", "final_raw": true, "speaker": "S1", "src_lang": "en", "text": "secure access", "dt_asr_s": 1.479}
+{"ts": "2025-10-30T17:00:23.097Z", "final_raw": true, "speaker": "S2", "src_lang": "en", "text": "Air Force it's Andrew Roberts", "dt_asr_s": 1.967}
+{"ts": "2025-10-30T17:00:23.184Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "secure access", "translation": "защищенный доступ"}
+{"ts": "2025-10-30T17:00:25.851Z", "final_raw": true, "speaker": "S1", "src_lang": "en", "text": "on 16 July 1989", "dt_asr_s": 1.901}
+{"ts": "2025-10-30T17:00:26.077Z", "type": "translation", "speaker": "S2", "src_lang": "en", "tgt_lang": "ru", "text": "Air Force it's Andrew Roberts", "translation": "Военно-воздушные силы - это Эндрю Робертс."}
+{"ts": "2025-10-30T17:00:30.176Z", "final_raw": true, "speaker": "S2", "src_lang": "en", "text": "thank you so you're interested in having", "dt_asr_s": 2.385}
+{"ts": "2025-10-30T17:00:30.286Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "on 16 July 1989", "translation": "16 июля 1989 года"}
+{"ts": "2025-10-30T17:00:35.904Z", "type": "translation", "speaker": "S2", "src_lang": "en", "tgt_lang": "ru", "text": "thank you so you're interested in having", "translation": "Спасибо, так что ты заинтересована в том, чтобы"}
+{"ts": "2025-10-30T17:08:51.005Z", "final_raw": true, "speaker": "S1", "text": "this is Andrew speaking I'm calling", "rt_s": 2.511}
+{"ts": "2025-10-30T17:08:54.470Z", "final_raw": true, "speaker": "S1", "text": "ask about getting a smart meter installed at my property", "rt_s": 2.576}
+{"ts": "2025-10-30T17:08:54.470Z", "speaker": "S1", "lang": "en", "text": "this is Andrew speaking I'm calling"}
+{"ts": "2025-10-30T17:08:54.627Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "this is Andrew speaking I'm calling", "translation": "Это Эндрю, я звоню."}
+{"ts": "2025-10-30T17:08:54.627Z", "speaker": "S1", "lang": "en", "text": "ask about getting a smart meter installed at my property"}
+{"ts": "2025-10-30T17:08:54.860Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "ask about getting a smart meter installed at my property", "translation": "Спроси о том, чтобы установить смартметр в моей собственности."}
+{"ts": "2025-10-30T17:08:57.040Z", "final_raw": true, "speaker": "S2", "text": "good morning Andrew you've reached", "rt_s": 2.175}
+{"ts": "2025-10-30T17:09:00.161Z", "final_raw": true, "speaker": "S1", "text": "green spark energy I'll be happy to help with that", "rt_s": 2.667}
+{"ts": "2025-10-30T17:09:00.161Z", "speaker": "S2", "lang": "en", "text": "good morning Andrew you've reached"}
+{"ts": "2025-10-30T17:09:00.359Z", "type": "translation", "speaker": "S2", "src_lang": "en", "tgt_lang": "ru", "text": "good morning Andrew you've reached", "translation": "Доброе утро, Эндрю."}
+{"ts": "2025-10-30T17:09:00.359Z", "speaker": "S1", "lang": "en", "text": "green spark energy I'll be happy to help with that"}
+{"ts": "2025-10-30T17:09:00.575Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "green spark energy I'll be happy to help with that", "translation": "Зеленая искра, я с радостью помогу с этим."}
+{"ts": "2025-10-30T17:09:02.866Z", "final_raw": true, "speaker": "S1", "text": "can I take your full address please", "rt_s": 2.287}
+{"ts": "2025-10-30T17:09:05.409Z", "final_raw": true, "speaker": "S1", "text": "sure it's 12 Clifton Road Blackpool", "rt_s": 2.54}
+{"ts": "2025-10-30T17:09:05.409Z", "speaker": "S1", "lang": "en", "text": "can I take your full address please"}
+{"ts": "2025-10-30T17:09:05.567Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "can I take your full address please", "translation": "Могу я взять ваш полный адрес, пожалуйста?"}
+{"ts": "2025-10-30T17:09:07.368Z", "final_raw": true, "speaker": "S1", "text": "FY43 HX", "rt_s": 1.798}
+{"ts": "2025-10-30T17:09:07.368Z", "speaker": "S1", "lang": "en", "text": "sure it's 12 Clifton Road Blackpool"}
+{"ts": "2025-10-30T17:09:07.628Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "sure it's 12 Clifton Road Blackpool", "translation": "Уверен, что это 12 \"Клифтон Роуд Блэкпул\""}
+{"ts": "2025-10-30T17:09:10.678Z", "final_raw": true, "speaker": "S1", "text": "thank you let me just bring up your account", "rt_s": 2.523}
+{"ts": "2025-10-30T17:09:10.678Z", "speaker": "S1", "lang": "en", "text": "FY43 HX"}
+{"ts": "2025-10-30T17:09:10.842Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "FY43 HX", "translation": "43 HX (в тыс. долл. США)"}
+{"ts": "2025-10-30T17:09:10.842Z", "speaker": "S1", "lang": "en", "text": "thank you let me just bring up your account"}
+{"ts": "2025-10-30T17:09:11.022Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "thank you let me just bring up your account", "translation": "Спасибо, позволь мне зачитать твой счёт."}
+{"ts": "2025-10-30T17:09:13.206Z", "final_raw": true, "speaker": "S1", "text": "yes I can see your supply", "rt_s": 2.179}
+{"ts": "2025-10-30T17:09:18.929Z", "final_raw": true, "speaker": "S1", "text": "can I also confirm the account holders full name and date of birth for security purposes", "rt_s": 3.414}
+{"ts": "2025-10-30T17:09:18.929Z", "speaker": "S1", "lang": "en", "text": "yes I can see your supply"}
+{"ts": "2025-10-30T17:09:19.052Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "yes I can see your supply", "translation": "Да, я вижу ваше предложение."}
+{"ts": "2025-10-30T17:09:19.052Z", "speaker": "S1", "lang": "en", "text": "can I also confirm the account holders full name and date of birth for security purposes"}
+{"ts": "2025-10-30T17:09:19.322Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "can I also confirm the account holders full name and date of birth for security purposes", "translation": "Могу ли я также подтвердить владельцам счетов полное имя и дату рождения для целей обеспечения безопасности?"}
+{"ts": "2025-10-30T17:09:20.856Z", "final_raw": true, "speaker": "S1", "text": "of course", "rt_s": 1.53}
+{"ts": "2025-10-30T17:09:28.601Z", "final_raw": true, "speaker": "S1", "text": "contact us", "rt_s": 1.567}
+{"ts": "2025-10-30T17:09:28.601Z", "speaker": "S1", "lang": "en", "text": "of course"}
+{"ts": "2025-10-30T17:09:28.670Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "of course", "translation": "Конечно."}
+{"ts": "2025-10-30T17:09:30.494Z", "final_raw": true, "speaker": "S1", "text": "contact us at", "rt_s": 1.619}
+{"ts": "2025-10-30T17:09:30.494Z", "speaker": "S1", "lang": "en", "text": "contact us"}
+{"ts": "2025-10-30T17:09:30.613Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "contact us", "translation": "Свяжитесь с нами"}
+{"ts": "2025-10-30T17:09:33.657Z", "final_raw": true, "speaker": "S1", "text": "Thank you.", "rt_s": 1.682}
+{"ts": "2025-10-30T17:09:33.657Z", "speaker": "S1", "lang": "en", "text": "contact us at"}
+{"ts": "2025-10-30T17:09:33.797Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "contact us at", "translation": "Свяжитесь с нами по адресу:"}
+{"ts": "2025-10-30T17:09:33.797Z", "speaker": "S1", "lang": "en", "text": "Thank you."}
+{"ts": "2025-10-30T17:09:33.865Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "Thank you.", "translation": "Спасибо."}
+{"ts": "2025-10-30T17:09:36.404Z", "final_raw": true, "speaker": "S1", "text": "contact us", "rt_s": 1.549}
+{"ts": "2025-10-30T17:09:47.199Z", "final_raw": true, "speaker": "S1", "text": "www.mptr.com", "rt_s": 3.084}
+{"ts": "2025-10-30T17:09:47.199Z", "speaker": "S1", "lang": "en", "text": "contact us"}
+{"ts": "2025-10-30T17:09:47.313Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "contact us", "translation": "Свяжитесь с нами"}
+{"ts": "2025-10-30T17:09:53.456Z", "speaker": "S1", "lang": "en", "text": "www.mptr.com"}
+{"ts": "2025-10-30T17:09:53.632Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "www.mptr.com", "translation": "www.mptr.com"}
+{"ts": "2025-10-30T17:21:54.594Z", "speaker": "S1", "lang": "en", "text": "Andrew speaking. I'm calling to ask about getting a smart"}
+{"ts": "2025-10-30T17:21:54.867Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "Andrew speaking. I'm calling to ask about getting a smart", "translation": "Эндрю, я звоню, чтобы спросить о том, чтобы стать умным."}
+{"ts": "2025-10-30T17:22:02.216Z", "speaker": "S1", "lang": "en", "text": "installed at my property good morning"}
+{"ts": "2025-10-30T17:22:02.414Z", "type": "translation", "speaker": "S1", "src_lang": "en", "tgt_lang": "ru", "text": "installed at my property good morning", "translation": "Утро доброе. Доброе утро. Доброе утро."}
+{"ts": "2025-10-30T17:22:02.414Z", "speaker": "S2", "lang": "en", "text": "Andrew, you've reached green spark energy."}
+{"ts": "2025-10-30T17:22:02.609Z", "type": "translation", "speaker": "S2", "src_lang": "en", "tgt_lang": "ru", "text": "Andrew, you've reached green spark energy.", "translation": "Эндрю, ты достиг зелёной искры."}
+{"ts": "2025-10-30T17:22:05.591Z", "speaker": "S2", "lang": "en", "text": "I'll be happy to help with that. Can I take your full address, please?"}
+{"ts": "2025-10-30T17:22:05.746Z", "type": "translation", "speaker": "S2", "src_lang": "en", "tgt_lang": "ru", "text": "I'll be happy to help with that. Can I take your full address, please?", "translation": "Могу я взять ваш полный адрес, пожалуйста?"}
+{"ts": "2025-10-30T17:22:07.776Z", "speaker": "S2", "lang": "en", "text": "Sure. It's 12 Clifton Road, Blackpool."}
+{"ts": "2025-10-30T17:22:08.017Z", "type": "translation", "speaker": "S2", "src_lang": "en", "tgt_lang": "ru", "text": "Sure. It's 12 Clifton Road, Blackpool.", "translation": "Это 12 Клифтон Роуд, Блэкпул."}
+{"ts": "2025-10-30T17:22:11.027Z", "speaker": "S2", "lang": "en", "text": "FY43HX."}
+{"ts": "2025-10-30T17:22:11.134Z", "type": "translation", "speaker": "S2", "src_lang": "en", "tgt_lang": "ru", "text": "FY43HX.", "translation": "43 километра."}
+{"ts": "2025-10-30T17:22:11.856Z", "speaker": "S2", "lang": "en", "text": "Let me just bring up your account."}
+{"ts": "2025-10-30T17:22:12.039Z", "type": "translation", "speaker": "S2", "src_lang": "en", "tgt_lang": "ru", "text": "Let me just bring up your account.", "translation": "Позволь мне рассказать о твоем счете."}
+{"ts": "2025-10-30T17:22:19.342Z", "speaker": "S2", "lang": "en", "text": "Yes, I can see your supply details here. Can I also confirm the account holder's full name and date of birth?"}
+{"ts": "2025-10-30T17:22:19.552Z", "type": "translation", "speaker": "S2", "src_lang": "en", "tgt_lang": "ru", "text": "Yes, I can see your supply details here. Can I also confirm the account holder's full name and date of birth?", "translation": "Могу я также подтвердить полное имя и дату рождения владельца счета?"}
+{"ts": "2025-10-30T17:23:33.398Z", "speaker": "S2", "lang": "en", "text": "Force. It's Andrew Rocks, born on"}
+{"ts": "2025-10-30T17:23:33.573Z", "type": "translation", "speaker": "S2", "src_lang": "en", "tgt_lang": "ru", "text": "Force. It's Andrew Rocks, born on", "translation": "Это Эндрю Рокс, родившийся на"}
+{"ts": "2025-10-30T17:23:33.573Z", "speaker": "S2", "lang": "en", "text": "I'm ready to start."}
+{"ts": "2025-10-30T17:23:33.654Z", "type": "translation", "speaker": "S2", "src_lang": "en", "tgt_lang": "ru", "text": "I'm ready to start.", "translation": "Я готов начать."}
