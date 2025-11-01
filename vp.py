@@ -36,14 +36,14 @@ SUGGEST_MAX_HISTORY  = int(ENV.get("SUGGEST_MAX_HISTORY", "10"))
 SUGGEST_TIMEOUT      = float(ENV.get("SUGGEST_TIMEOUT", "6.0"))
 SUGGEST_TEMPERATURE  = float(ENV.get("SUGGEST_TEMPERATURE", "0.2"))
 
-# ---- Маршрутизация/захват S2 (по умолчанию — мягко, с фоллбэком) ----
-REQUIRE_BT_FOR_S2       = ENV.get("REQUIRE_BT_FOR_S2", "0").lower() in ("1","true","yes")   # по умолчанию 0
-ALLOW_S2_ALSA_FALLBACK  = ENV.get("ALLOW_S2_ALSA_FALLBACK", "1").lower() in ("1","true","yes")  # по умолчанию 1
+# ---- Маршрутизация/захват S2 (мягко, с фоллбэком) ----
+REQUIRE_BT_FOR_S2       = ENV.get("REQUIRE_BT_FOR_S2", "0").lower() in ("1","true","yes")
+ALLOW_S2_ALSA_FALLBACK  = ENV.get("ALLOW_S2_ALSA_FALLBACK", "1").lower() in ("1","true","yes")
 
-# ---- Подавление эха (усилено) ----
-ECHO_SIM_THRESHOLD  = float(ENV.get("ECHO_SIM_THRESHOLD", "0.75"))  # схожесть S2~S1 для глушения
-ECHO_WINDOW_SEC     = float(ENV.get("ECHO_WINDOW_SEC", "1.2"))      # окно по времени
-MAX_S1_CACHE        = int(ENV.get("MAX_S1_CACHE", "3"))             # сколько последних S1 учитываем
+# ---- Подавление эха ----
+ECHO_SIM_THRESHOLD  = float(ENV.get("ECHO_SIM_THRESHOLD", "0.75"))
+ECHO_WINDOW_SEC     = float(ENV.get("ECHO_WINDOW_SEC", "1.2"))
+MAX_S1_CACHE        = int(ENV.get("MAX_S1_CACHE", "3"))
 
 # --- RU -> EN автоперевод цели (один раз при старте), если в переменной русская строка ---
 def _looks_russian(s: str) -> bool:
@@ -123,7 +123,7 @@ LOG_DIR = os.path.expanduser("call_logs"); os.makedirs(LOG_DIR, exist_ok=True)
 LOG_PATH = os.path.join(LOG_DIR, f"call_{dt.datetime.now():%Y%m%d_%H%M%S}.log")
 def ts(): return dt.datetime.now().strftime("%H:%M:%S")
 
-# ------------------- вывод (цвета / утилиты) -------------------
+# ------------- цвета / вывод -------------
 def _supports_color():
     return sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
 USE_COLOR = _supports_color()
@@ -131,11 +131,18 @@ RESET = "\033[0m" if USE_COLOR else ""
 DIM   = "\033[2m" if USE_COLOR else ""
 RED   = "\033[31m" if USE_COLOR else ""
 GRN   = "\033[32m" if USE_COLOR else ""
+BLU   = "\033[34m" if USE_COLOR else ""
 CYAN  = "\033[36m" if USE_COLOR else ""
 ITAL  = "\033[3m"  if USE_COLOR else ""
 ANSI_RE = _re.compile(r"\x1b\[[0-9;]*m")
+
 def strip_ansi(s: str) -> str: return ANSI_RE.sub("", s)
 _print_lock = asyncio.Lock()
+
+# глобальный счётчик «сноски» для реплик
+MSG_ID = 0
+def next_msg_id() -> int:
+    global MSG_ID; MSG_ID += 1; return MSG_ID
 
 async def print_and_log(line: str):
     async with _print_lock:
@@ -247,15 +254,26 @@ class LiveManager:
         self._footer_last_render_ms[label] = time.monotonic() * 1000.0
         await self._update_footer_now()
 
-    async def print_final_with_extras(self, label: str, text: str, tr_text: str | None = None):
-        await print_and_log(f"{ts()} | {label}: {text}")
+    async def print_final_with_extras(self, label: str, text: str, tr_text: str | None = None) -> int:
+        """
+        Печатает финальную реплику с цветами и возвращает msg_id для «сноски».
+        Также печатает перевод (серым) и синий плейсхолдер для SUGGEST.
+        """
+        msg_id = next_msg_id()
+        t0 = ts()
+        label_col = RED if label == "S1" else GRN
+        # Основная реплика
+        await print_and_log(f"{t0} | [#{msg_id}] {label_col}{label}{RESET}: {text}")
+        # Перевод (серый)
         if ENABLE_TRANSLATION:
             if tr_text and tr_text.strip():
-                await print_and_log(f"{ts()} | {label} → RU: {tr_text.strip()}")
+                await print_and_log(f"{DIM}{t0} | [#{msg_id}] {label} → RU: {tr_text.strip()}{RESET}")
             else:
-                await print_and_log(f"{ts()} | {label} → RU: —")
+                await print_and_log(f"{DIM}{t0} | [#{msg_id}] {label} → RU: —{RESET}")
+        # Плейсхолдер для SUGGEST
         if ENABLE_SUGGEST and label == "S2":
-            await print_and_log(f"{ts()} | SUGGEST: —")
+            await print_and_log(f"{BLU}{t0} |   ↳ SUGGEST[#{msg_id}]: —{RESET}")
+        return msg_id
 
 # ------------------- менеджер перевода -------------------
 class TranslationManager:
@@ -346,20 +364,20 @@ class SuggestionManager:
             self.worker_task.cancel()
             with contextlib.suppress(Exception): await self.worker_task
 
-    async def schedule_for_s2(self):
+    async def schedule_for_s2(self, anchor_id: int):
         if not self.enabled:
             return
         tail = self.history[-SUGGEST_MAX_HISTORY:]
-        await self.queue.put(tail)
+        await self.queue.put({"tail": tail, "anchor": anchor_id})
 
     async def _worker(self):
         while True:
-            tail = await self.queue.get()
+            item = await self.queue.get()
             try:
-                suggestions = await self._generate_suggestions(tail)
+                suggestions = await self._generate_suggestions(item["tail"])
                 if suggestions:
                     line = " | ".join(f"{i+1}) {s}" for i, s in enumerate(suggestions[:3]))
-                    await print_and_log(f"{ts()} | SUGGEST: {line}")
+                    await print_and_log(f"{BLU}{ts()} |   ↳ SUGGEST[#{item['anchor']}]: {line}{RESET}")
             except Exception as e:
                 await info_line(f"[SUGGEST] error: {e}")
             finally:
@@ -475,26 +493,17 @@ def find_hyperx_mic():
     return ""
 
 def build_s2_candidates(primary_mode: str) -> list[str]:
-    """
-    Возвращает список кандидатов для S2 в порядке приоритета.
-    1) Все доступные bluez_output.* (BT-sink)
-    2) Если разрешён фоллбэк — дефолтный ALSA sink и прочие alsa_output.*
-    Если явно передано имя узла — используем его (если существует).
-    """
     names = list_node_names()
     bt_sinks = [n for n in names if n.startswith("bluez_output.")]
     alsa_snks = [n for n in names if n.startswith("alsa_output.")]
     def_snk  = get_default_sink_name()
 
-    # Явное имя
     if primary_mode and primary_mode not in ("AUTO_BT_SINK","AUTO_BT_AUTO","AUTO_DEFAULT_SINK","AUTO_ALSA_SINK","AUTO_BT_SOURCE"):
         return [primary_mode] if primary_mode in names else []
 
     cands: list[str] = []
-    # Сначала BT, если не запрещено
     cands.extend(bt_sinks)
 
-    # Фоллбэк (если разрешён или если BT обязателен, но отсутствует — тогда логируем)
     if (ALLOW_S2_ALSA_FALLBACK and (not REQUIRE_BT_FOR_S2 or not bt_sinks)):
         if def_snk:
             cands.append(def_snk)
@@ -502,7 +511,6 @@ def build_s2_candidates(primary_mode: str) -> list[str]:
             if n != def_snk:
                 cands.append(n)
 
-    # Уникализируем
     seen = set(); uniq = []
     for n in cands:
         if n not in seen:
@@ -721,10 +729,6 @@ class S2CaptureController:
         await self.start(sink_name)
 
 class RoutingGuard:
-    """
-    Следит за активностью S1/S2, подавляет эхо, при отсутствии S2-потока
-    пробует перелистнуть кандидатов на следующий sink.
-    """
     def __init__(self, s2ctrl: S2CaptureController, candidates: list[str]):
         self.s2ctrl = s2ctrl
         self.candidates = candidates[:]
@@ -765,7 +769,6 @@ class RoutingGuard:
 
     def is_echo_of_recent_s1(self, s2_txt: str) -> bool:
         now = time.monotonic()
-        # Игнорируем совсем короткие технические обрывки
         if len(s2_txt.strip()) <= 3:
             return True
         for (t1, t1_time) in list(reversed(self.s1_cache)):
@@ -868,11 +871,9 @@ class Coalescer:
         if TM:
             tr_now = await TM.on_utterance_finalized(label)
 
-        # ---- Роутинг-история ----
         if 'ROUTE_GUARD' in globals() and ROUTE_GUARD:
             await ROUTE_GUARD.note(label, txt)
 
-        # ---- Подавление эха: S2 похож на свежие S1 ----
         if label == "S2" and 'ROUTE_GUARD' in globals() and ROUTE_GUARD:
             try:
                 if ROUTE_GUARD.is_echo_of_recent_s1(txt):
@@ -886,13 +887,12 @@ class Coalescer:
                 pass
 
         await self.live.clear_live_line(label)
-        await self.live.print_final_with_extras(label, txt, tr_text=tr_now)
+        msg_id = await self.live.print_final_with_extras(label, txt, tr_text=tr_now)
 
-        # ---- История и SUGGEST ----
         if SM:
             SM.add_history(label, txt)
             if ENABLE_SUGGEST and label == "S2":
-                await SM.schedule_for_s2()
+                await SM.schedule_for_s2(anchor_id=msg_id)
 
         self._parts[label].clear()
         self._partial[label] = ""
@@ -1037,7 +1037,6 @@ async def main():
 
         candidates = build_s2_candidates(S2_TARGET or "AUTO_BT_AUTO")
 
-        # Если требуем BT но его реально нет — просто сообщаем и фоллбэчим (чтобы не ломать работу)
         bt_nodes = list_bluez_all()
         if REQUIRE_BT_FOR_S2 and not any(n.startswith("bluez_output.") for n in bt_nodes):
             await head_line("[WARN] Не найдено bluez_output.*, хотя REQUIRE_BT_FOR_S2=1. Включаю фоллбэк на ALSA sink.")
@@ -1052,6 +1051,7 @@ async def main():
             s2ctrl = S2CaptureController(send, SAMPLE_RATE)
             await s2ctrl.start(candidates[0])
 
+            global ROUTE_GUARD
             ROUTE_GUARD = RoutingGuard(s2ctrl, candidates)
             await ROUTE_GUARD.start()
             tasks.append(s2ctrl.task)
