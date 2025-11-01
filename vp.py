@@ -5,9 +5,7 @@ import os, sys, asyncio, json, signal, datetime as dt, subprocess, contextlib, t
 import websockets
 import urllib.request, urllib.error
 
-
 # ===================== ТЕСТОВЫЕ ПЕРЕМЕННЫЕ (цель/контекст) =====================
-# Можно править здесь или через .env (см. ниже переменные DIALOG_GOAL_EN / DIALOG_CONTEXT_EN)
 DIALOG_GOAL_EN_DEFAULT    = "I'm calling my electricity provider to arrange and order a smart meter as soon as possible."
 DIALOG_CONTEXT_EN_DEFAULT = "United Kingdom context, I am a 35-year-old male customer. Be concise, polite and goal-driven."
 
@@ -32,11 +30,20 @@ if not API_KEY:
 
 # ---------- OpenAI / SUGGEST ----------
 OPENAI_API_KEY       = (ENV.get("OPENAI_API") or "").strip()
-ENABLE_SUGGEST       = ENV.get("ENABLE_SUGGEST", "1").lower() in ("1","true","yes")  # можно выключить
+ENABLE_SUGGEST       = ENV.get("ENABLE_SUGGEST", "1").lower() in ("1","true","yes")
 SUGGEST_MODEL        = ENV.get("SUGGEST_MODEL", "gpt-5-mini")
-SUGGEST_MAX_HISTORY  = int(ENV.get("SUGGEST_MAX_HISTORY", "10"))  # брать последние N реплик (S1/S2 совместно)
-SUGGEST_TIMEOUT      = float(ENV.get("SUGGEST_TIMEOUT", "6.0"))   # сек, неблокирующая задача
+SUGGEST_MAX_HISTORY  = int(ENV.get("SUGGEST_MAX_HISTORY", "10"))
+SUGGEST_TIMEOUT      = float(ENV.get("SUGGEST_TIMEOUT", "6.0"))
 SUGGEST_TEMPERATURE  = float(ENV.get("SUGGEST_TEMPERATURE", "0.2"))
+
+# ---- Маршрутизация/захват S2 (по умолчанию — мягко, с фоллбэком) ----
+REQUIRE_BT_FOR_S2       = ENV.get("REQUIRE_BT_FOR_S2", "0").lower() in ("1","true","yes")   # по умолчанию 0
+ALLOW_S2_ALSA_FALLBACK  = ENV.get("ALLOW_S2_ALSA_FALLBACK", "1").lower() in ("1","true","yes")  # по умолчанию 1
+
+# ---- Подавление эха (усилено) ----
+ECHO_SIM_THRESHOLD  = float(ENV.get("ECHO_SIM_THRESHOLD", "0.75"))  # схожесть S2~S1 для глушения
+ECHO_WINDOW_SEC     = float(ENV.get("ECHO_WINDOW_SEC", "1.2"))      # окно по времени
+MAX_S1_CACHE        = int(ENV.get("MAX_S1_CACHE", "3"))             # сколько последних S1 учитываем
 
 # --- RU -> EN автоперевод цели (один раз при старте), если в переменной русская строка ---
 def _looks_russian(s: str) -> bool:
@@ -72,7 +79,6 @@ def _translate_ru_goal_to_en(text: str) -> str:
         out = (data.get("choices") or [{}])[0].get("message", {}).get("content", "") or ""
         out = out.strip()
         if out:
-            # убрать возможные кавычки по краям
             out = _re.sub(r'^\s*[\"“](.*?)[\"”]\s*$', r'\1', out)
             print(f'Goal:\n{out}')
             return out
@@ -83,7 +89,6 @@ def _translate_ru_goal_to_en(text: str) -> str:
 
 _raw_goal = (ENV.get("DIALOG_GOAL_EN") or DIALOG_GOAL_EN_DEFAULT).strip()
 DIALOG_GOAL_EN = _translate_ru_goal_to_en(_raw_goal) if _looks_russian(_raw_goal) else _raw_goal
-
 DIALOG_CONTEXT_EN = (ENV.get("DIALOG_CONTEXT_EN") or DIALOG_CONTEXT_EN_DEFAULT).strip()
 
 DEBUG  = ENV.get("DEBUG", "0").lower() in ("1","true","yes")
@@ -249,7 +254,6 @@ class LiveManager:
                 await print_and_log(f"{ts()} | {label} → RU: {tr_text.strip()}")
             else:
                 await print_and_log(f"{ts()} | {label} → RU: —")
-        # SUGGEST печатаем placeholder только для S2 (наш собеседник), потом неблокирующе допечатаем варианты
         if ENABLE_SUGGEST and label == "S2":
             await print_and_log(f"{ts()} | SUGGEST: —")
 
@@ -258,7 +262,7 @@ class TranslationManager:
     def __init__(self, live: LiveManager):
         self.live = live
         self._parts = {"S1": [], "S2": []}
-        self._pending = {"S1": None, "S2": None}  # {"deadline_ms":..., "printed":bool}
+        self._pending = {"S1": None, "S2": None}
         self._watch_task = None
 
     def _joined(self, label: str) -> str:
@@ -319,16 +323,11 @@ class TranslationManager:
 
 # ------------------- менеджер SUGGEST (OpenAI) -------------------
 class SuggestionManager:
-    """
-    Неблокирующая генерация 3 коротких ответов для S1 после финала S2.
-    Хранит историю (финальные реплики), шлёт в OpenAI последние N, печатает одной строкой.
-    """
     def __init__(self):
-        self.history = []  # список кортежей (label, text) только финалы
+        self.history = []
         self.queue = asyncio.Queue()
         self.worker_task = None
         self.enabled = ENABLE_SUGGEST and bool(OPENAI_API_KEY)
-
 
     def add_history(self, label: str, text: str):
         self.history.append((label, text))
@@ -348,10 +347,8 @@ class SuggestionManager:
             with contextlib.suppress(Exception): await self.worker_task
 
     async def schedule_for_s2(self):
-        """Планируем подсказку на основе последних N реплик."""
         if not self.enabled:
             return
-        # снимок последних N
         tail = self.history[-SUGGEST_MAX_HISTORY:]
         await self.queue.put(tail)
 
@@ -361,16 +358,13 @@ class SuggestionManager:
             try:
                 suggestions = await self._generate_suggestions(tail)
                 if suggestions:
-                    # печатаем одной строкой
                     line = " | ".join(f"{i+1}) {s}" for i, s in enumerate(suggestions[:3]))
                     await print_and_log(f"{ts()} | SUGGEST: {line}")
-                # иначе — оставляем «SUGGEST: —»
             except Exception as e:
                 await info_line(f"[SUGGEST] error: {e}")
             finally:
                 self.queue.task_done()
 
-    # ---- OpenAI HTTP helper (без внешних зависимостей) ----
     async def _post_json(self, url: str, headers: dict, payload: dict, timeout: float):
         def _do():
             data = json.dumps(payload).encode("utf-8")
@@ -383,10 +377,7 @@ class SuggestionManager:
         return await loop.run_in_executor(None, _do)
 
     def _build_prompt(self, tail: list[tuple[str,str]]) -> dict:
-        # Формируем компактную текстовую историю
-        lines = []
-        for lab, txt in tail:
-            lines.append(f"{lab}: {txt}")
+        lines = [f"{lab}: {txt}" for lab, txt in tail]
         hist_txt = "\n".join(lines) if lines else "(no history yet)"
 
         system_msg = (
@@ -397,14 +388,12 @@ class SuggestionManager:
             "Keep it under 20 words, polite, clear, and progressing toward the goal. "
             "Return ONLY a JSON array with ONE string."
         )
-
         user_msg = (
             f"Goal: {DIALOG_GOAL_EN}\n"
             f"Context: {DIALOG_CONTEXT_EN}\n\n"
             f"Recent transcript (last {SUGGEST_MAX_HISTORY} turns):\n{hist_txt}\n\n"
             "Now return a JSON array with ONE suggestion for S1's next reply."
         )
-
         return {
             "model": SUGGEST_MODEL,
             "messages": [
@@ -421,119 +410,23 @@ class SuggestionManager:
             "Authorization": f"Bearer {OPENAI_API_KEY}",
             "Content-Type": "application/json",
         }
-        # Chat Completions endpoint
         url = "https://api.openai.com/v1/chat/completions"
+        resp = await self._post_json(url, headers, payload, timeout=SUGGEST_TIMEOUT)
+        content = (resp.get("choices") or [{}])[0].get("message", {}).get("content", "") or ""
         try:
-            resp = await self._post_json(url, headers, payload, timeout=SUGGEST_TIMEOUT)
-            content = (resp.get("choices") or [{}])[0].get("message", {}).get("content", "") or ""
-            # ждём JSON-массив
-            suggestions = None
-            try:
-                suggestions = json.loads(content)
-            except Exception:
-                # fallback: попытка вытащить массив из текста
-                m = _re.search(r"\[[\s\S]*\]", content)
-                if m:
-                    suggestions = json.loads(m.group(0))
-            if not isinstance(suggestions, list):
-                return None
-            # очистка и нормализация
-            out = []
-            for s in suggestions:
-                if not isinstance(s, str): continue
-                s = _re.sub(r"\s+", " ", s).strip()
-                if s:
-                    out.append(s)
-                if len(out) == 3: break
-            return out if out else None
-        except urllib.error.HTTPError as e:
-            txt = e.read().decode("utf-8", "ignore")
-            raise RuntimeError(f"OpenAI HTTP {e.code}: {txt}") from None
-        except Exception as e:
-            raise
-
-# глобальные менеджеры
-LIVE: LiveManager | None = None
-TM: TranslationManager | None = None
-SM: SuggestionManager | None = None
-
-# ------------------- Коалесцер реплик -------------------
-class Coalescer:
-    def __init__(self, live: LiveManager, tm: TranslationManager | None):
-        self.live = live
-        self.tm = tm
-        self._parts = {"S1":[], "S2":[]}
-        self._partial = {"S1":"", "S2":""}
-        self._last_activity = {"S1":0.0, "S2":0.0}
-        self._watch_task = None
-
-    def _joined(self, label: str) -> str:
-        parts = self._parts[label][:]
-        if self._partial[label]:
-            parts.append(self._partial[label])
-        txt = " ".join(p.strip() for p in parts if p.strip())
-        return _re.sub(r"\s+", " ", txt).strip()
-
-    async def start(self):
-        self._watch_task = asyncio.create_task(self._watchdog())
-
-    async def stop(self):
-        if self._watch_task:
-            self._watch_task.cancel()
-            with contextlib.suppress(Exception): await self._watch_task
-        for label in ("S1","S2"):
-            await self._finalize_if_needed(label, force=True)
-
-    async def on_partial(self, label: str, text: str):
-        if not self._parts[label] and not self._partial[label]:
-            if TM:
-                await TM.on_new_utterance_started(label)
-        self._partial[label] = text or ""
-        self._last_activity[label] = time.monotonic() * 1000.0
-        await self.live.show_live_text(label, self._joined(label))
-
-    async def on_final_chunk(self, label: str, text: str):
-        if text:
-            self._parts[label].append(text)
-        self._partial[label] = ""
-        self._last_activity[label] = time.monotonic() * 1000.0
-        await self.live.show_live_text(label, self._joined(label))
-
-    async def _watchdog(self):
-        try:
-            while True:
-                await asyncio.sleep(0.05)
-                now_ms = time.monotonic() * 1000.0
-                for label in ("S1","S2"):
-                    last = self._last_activity[label]
-                    if last <= 0:
-                        continue
-                    if (now_ms - last) >= EOU_FINALIZE_MS:
-                        await self._finalize_if_needed(label, force=False)
-        except asyncio.CancelledError:
-            pass
-
-    async def _finalize_if_needed(self, label: str, force: bool):
-        txt = self._joined(label)
-        if not txt:
-            return
-        tr_now = None
-        if TM:
-            tr_now = await TM.on_utterance_finalized(label)
-
-        await self.live.clear_live_line(label)
-        await self.live.print_final_with_extras(label, txt, tr_text=tr_now)
-
-        # ---- История и SUGGEST ----
-        if SM:
-            SM.add_history(label, txt)
-            if ENABLE_SUGGEST and label == "S2":
-                # планируем подсказки (неблокирующе)
-                await SM.schedule_for_s2()
-
-        self._parts[label].clear()
-        self._partial[label] = ""
-        self._last_activity[label] = 0.0
+            suggestions = json.loads(content)
+        except Exception:
+            m = _re.search(r"\[[\s\S]*\]", content)
+            suggestions = json.loads(m.group(0)) if m else None
+        if not isinstance(suggestions, list):
+            return None
+        out = []
+        for s in suggestions:
+            if not isinstance(s, str): continue
+            s = _re.sub(r"\s+", " ", s).strip()
+            if s: out.append(s)
+            if len(out) == 3: break
+        return out if out else None
 
 # ------------------- PipeWire helpers -------------------
 def run_cmd(cmd):
@@ -547,6 +440,13 @@ def run_cmd(cmd):
 def list_node_names():
     out = run_cmd(["wpctl","status","--name"])
     return _re.findall(r'([A-Za-z0-9_.:-]+)\s*$', out, flags=_re.M)
+
+def list_bluez_all():
+    names = list_node_names()
+    return [n for n in names if n.startswith(("bluez_output.","bluez_input.","bluez_source."))]
+
+def list_bluez_sinks():
+    return [n for n in list_node_names() if n.startswith("bluez_output.")]
 
 def find_bt_sink_any():
     for n in list_node_names():
@@ -568,37 +468,50 @@ def get_default_sink_name():
 def find_hyperx_mic():
     names = list_node_names()
     for n in names:
-        if n.startswith("alsa_input.") and ("HyperX" in n or "DuoCast" in n or "usb-" in n):
+        if n.startswith("alsa_input.") and ("HyperX" in n or "DuoCast" in n or "usb-" in n or "Trust_PC_Headset" in n):
             return n
     for n in names:
         if n.startswith("alsa_input."): return n
     return ""
 
-async def wait_for_sink(mode_or_name: str, timeout_sec=180):
-    t0 = dt.datetime.now()
-    def pick():
-        if mode_or_name == "AUTO_DEFAULT_SINK":
-            return get_default_sink_name() or ""
-        if mode_or_name == "AUTO_BT_SINK":
-            return find_bt_sink_any()
-        if mode_or_name == "AUTO_ALSA_SINK":
-            return find_alsa_sink_any()
-        names = list_node_names()
-        return mode_or_name if mode_or_name and mode_or_name in names else ""
-    n0 = pick()
-    if n0:
-        return n0
-    while True:
-        cand = pick()
-        if cand:
-            return cand
-        if (dt.datetime.now() - t0).total_seconds() > timeout_sec:
-            return ""
-        await asyncio.sleep(0.3)
+def build_s2_candidates(primary_mode: str) -> list[str]:
+    """
+    Возвращает список кандидатов для S2 в порядке приоритета.
+    1) Все доступные bluez_output.* (BT-sink)
+    2) Если разрешён фоллбэк — дефолтный ALSA sink и прочие alsa_output.*
+    Если явно передано имя узла — используем его (если существует).
+    """
+    names = list_node_names()
+    bt_sinks = [n for n in names if n.startswith("bluez_output.")]
+    alsa_snks = [n for n in names if n.startswith("alsa_output.")]
+    def_snk  = get_default_sink_name()
+
+    # Явное имя
+    if primary_mode and primary_mode not in ("AUTO_BT_SINK","AUTO_BT_AUTO","AUTO_DEFAULT_SINK","AUTO_ALSA_SINK","AUTO_BT_SOURCE"):
+        return [primary_mode] if primary_mode in names else []
+
+    cands: list[str] = []
+    # Сначала BT, если не запрещено
+    cands.extend(bt_sinks)
+
+    # Фоллбэк (если разрешён или если BT обязателен, но отсутствует — тогда логируем)
+    if (ALLOW_S2_ALSA_FALLBACK and (not REQUIRE_BT_FOR_S2 or not bt_sinks)):
+        if def_snk:
+            cands.append(def_snk)
+        for n in alsa_snks:
+            if n != def_snk:
+                cands.append(n)
+
+    # Уникализируем
+    seen = set(); uniq = []
+    for n in cands:
+        if n not in seen:
+            uniq.append(n); seen.add(n)
+    return uniq
 
 # --- Инициализация устройств S1/S2 ---
 S1_DEVICE = ENV.get("S1_DEVICE") or find_hyperx_mic()
-S2_TARGET = ENV.get("S2_TARGET") or ""
+S2_TARGET = ENV.get("S2_TARGET") or "AUTO_BT_AUTO"
 
 # ------------------- Speechmatics helpers -------------------
 async def connect_ws(url, headers):
@@ -655,7 +568,6 @@ async def start_sm(label: str, want_translation: bool):
         "transcription_config": transcription_config
     }
 
-    # ВАЖНО: translation_config — на верхнем уровне, а не внутри transcription_config
     if want_translation:
         payload["translation_config"] = {
             "target_languages": [TRANSLATE_TO],
@@ -773,6 +685,219 @@ async def run_pw_record(cmd, on_chunk, label):
         with contextlib.suppress(Exception): t_stat.cancel()
         await info_line(f"[{label}] stopped")
 
+# ------------------- S2 capture controller & routing guard -------------------
+class S2CaptureController:
+    def __init__(self, send_func, sample_rate: int):
+        self.send_func = send_func
+        self.sample_rate = sample_rate
+        self.current_sink = None
+        self.task: asyncio.Task | None = None
+
+    async def start(self, sink_name: str):
+        await head_line(f"[S2_CAPTURE] start → {sink_name}")
+        self.current_sink = sink_name
+        cmd = [
+            "pw-record",
+            "--target", sink_name,
+            "--properties", "stream.capture.sink=true",
+            "--format", "s16", "--channels", "1", "--rate", str(self.sample_rate),
+            "-"
+        ]
+        self.task = asyncio.create_task(run_pw_record(cmd, self.send_func, "S2_capture"))
+
+    async def stop(self):
+        if self.task:
+            self.task.cancel()
+            with contextlib.suppress(Exception):
+                await self.task
+            self.task = None
+        self.current_sink = None
+
+    async def switch_to(self, sink_name: str):
+        if sink_name == self.current_sink:
+            return
+        await head_line(f"[S2_CAPTURE] switch → {sink_name}")
+        await self.stop()
+        await self.start(sink_name)
+
+class RoutingGuard:
+    """
+    Следит за активностью S1/S2, подавляет эхо, при отсутствии S2-потока
+    пробует перелистнуть кандидатов на следующий sink.
+    """
+    def __init__(self, s2ctrl: S2CaptureController, candidates: list[str]):
+        self.s2ctrl = s2ctrl
+        self.candidates = candidates[:]
+        self.idx = 0
+        self.task: asyncio.Task | None = None
+        self.last = {"S1": {"txt":"", "t":0.0}, "S2": {"txt":"", "t":0.0}}
+        self._last_switch_t = 0.0
+        self.s1_cache: list[tuple[str,float]] = []  # (text, t)
+
+    async def start(self):
+        self.task = asyncio.create_task(self._monitor())
+
+    async def stop(self):
+        if self.task:
+            self.task.cancel()
+            with contextlib.suppress(Exception):
+                await self.task
+
+    async def note(self, label: str, txt: str):
+        now = time.monotonic()
+        self.last[label]["txt"] = txt or ""
+        self.last[label]["t"] = now
+        if label == "S1":
+            self.s1_cache.append((txt or "", now))
+            if len(self.s1_cache) > MAX_S1_CACHE:
+                self.s1_cache = self.s1_cache[-MAX_S1_CACHE:]
+
+    def _sim(self, a: str, b: str) -> float:
+        def _nw(s):
+            s = s.lower()
+            s = _re.sub(r"[^a-z0-9' ]+", " ", s)
+            return [w for w in s.split() if w]
+        A, B = set(_nw(a)), set(_nw(b))
+        if not A and not B: return 1.0
+        if not A or not B:  return 0.0
+        inter = len(A & B); union = max(1, len(A | B))
+        return inter / union
+
+    def is_echo_of_recent_s1(self, s2_txt: str) -> bool:
+        now = time.monotonic()
+        # Игнорируем совсем короткие технические обрывки
+        if len(s2_txt.strip()) <= 3:
+            return True
+        for (t1, t1_time) in list(reversed(self.s1_cache)):
+            if (now - t1_time) > ECHO_WINDOW_SEC:
+                break
+            if self._sim(s2_txt, t1) >= ECHO_SIM_THRESHOLD:
+                return True
+        return False
+
+    async def maybe_switch_due_to_echo(self):
+        now = time.monotonic()
+        if len(self.candidates) <= 1:
+            return
+        if (now - self._last_switch_t) < 5.0:
+            return
+        new_idx = (self.idx + 1) % len(self.candidates)
+        await head_line(f"[ROUTE] Обнаружено эхо-дублирование S2 → пробую {self.candidates[new_idx]}")
+        self.idx = new_idx
+        await self.s2ctrl.switch_to(self.candidates[self.idx])
+        self._last_switch_t = now
+
+    async def _monitor(self):
+        try:
+            while True:
+                await asyncio.sleep(0.6)
+                now = time.monotonic()
+                s1_recent = (now - self.last["S1"]["t"]) < 3.0
+                s2_silence = (now - self.last["S2"]["t"]) > 4.0
+                if s1_recent and s2_silence and len(self.candidates) > 1:
+                    if (now - self._last_switch_t) >= 6.0:
+                        new_idx = (self.idx + 1) % len(self.candidates)
+                        await head_line(f"[ROUTE] Нет S2-потока → пробую {self.candidates[new_idx]}")
+                        self.idx = new_idx
+                        await self.s2ctrl.switch_to(self.candidates[self.idx])
+                        self._last_switch_t = now
+        except asyncio.CancelledError:
+            pass
+
+# ------------------- Коалесцер реплик -------------------
+class Coalescer:
+    def __init__(self, live: LiveManager, tm: TranslationManager | None):
+        self.live = live
+        self.tm = tm
+        self._parts = {"S1":[], "S2":[]}
+        self._partial = {"S1":"", "S2":""}
+        self._last_activity = {"S1":0.0, "S2":0.0}
+        self._watch_task = None
+
+    def _joined(self, label: str) -> str:
+        parts = self._parts[label][:]
+        if self._partial[label]:
+            parts.append(self._partial[label])
+        txt = " ".join(p.strip() for p in parts if p.strip())
+        return _re.sub(r"\s+", " ", txt).strip()
+
+    async def start(self):
+        self._watch_task = asyncio.create_task(self._watchdog())
+
+    async def stop(self):
+        if self._watch_task:
+            self._watch_task.cancel()
+            with contextlib.suppress(Exception): await self._watch_task
+        for label in ("S1","S2"):
+            await self._finalize_if_needed(label, force=True)
+
+    async def on_partial(self, label: str, text: str):
+        if not self._parts[label] and not self._partial[label]:
+            if TM:
+                await TM.on_new_utterance_started(label)
+        self._partial[label] = text or ""
+        self._last_activity[label] = time.monotonic() * 1000.0
+        await self.live.show_live_text(label, self._joined(label))
+
+    async def on_final_chunk(self, label: str, text: str):
+        if text:
+            self._parts[label].append(text)
+        self._partial[label] = ""
+        self._last_activity[label] = time.monotonic() * 1000.0
+        await self.live.show_live_text(label, self._joined(label))
+
+    async def _watchdog(self):
+        try:
+            while True:
+                await asyncio.sleep(0.05)
+                now_ms = time.monotonic() * 1000.0
+                for label in ("S1","S2"):
+                    last = self._last_activity[label]
+                    if last <= 0:
+                        continue
+                    if (now_ms - last) >= EOU_FINALIZE_MS:
+                        await self._finalize_if_needed(label, force=False)
+        except asyncio.CancelledError:
+            pass
+
+    async def _finalize_if_needed(self, label: str, force: bool):
+        txt = self._joined(label)
+        if not txt:
+            return
+        tr_now = None
+        if TM:
+            tr_now = await TM.on_utterance_finalized(label)
+
+        # ---- Роутинг-история ----
+        if 'ROUTE_GUARD' in globals() and ROUTE_GUARD:
+            await ROUTE_GUARD.note(label, txt)
+
+        # ---- Подавление эха: S2 похож на свежие S1 ----
+        if label == "S2" and 'ROUTE_GUARD' in globals() and ROUTE_GUARD:
+            try:
+                if ROUTE_GUARD.is_echo_of_recent_s1(txt):
+                    await info_line("[ECHO] Подавил S2 как эхо собственной реплики")
+                    await ROUTE_GUARD.maybe_switch_due_to_echo()
+                    self._parts[label].clear()
+                    self._partial[label] = ""
+                    self._last_activity[label] = 0.0
+                    return
+            except Exception:
+                pass
+
+        await self.live.clear_live_line(label)
+        await self.live.print_final_with_extras(label, txt, tr_text=tr_now)
+
+        # ---- История и SUGGEST ----
+        if SM:
+            SM.add_history(label, txt)
+            if ENABLE_SUGGEST and label == "S2":
+                await SM.schedule_for_s2()
+
+        self._parts[label].clear()
+        self._partial[label] = ""
+        self._last_activity[label] = 0.0
+
 # ------------------- утилиты старта/фоллбэка -------------------
 async def _wait_start_or_error(label, started_evt, err_box, timeout=8.0):
     t0 = time.monotonic()
@@ -803,9 +928,10 @@ COALESCE: Coalescer | None = None
 LIVE: LiveManager | None = None
 TM: TranslationManager | None = None
 SM: SuggestionManager | None = None
+ROUTE_GUARD: RoutingGuard | None = None
 
 async def main():
-    global LIVE, TM, COALESCE, SM
+    global LIVE, TM, COALESCE, SM, ROUTE_GUARD
     await head_line(f"[INFO] Лог файл: {LOG_PATH}")
 
     # S1
@@ -822,7 +948,7 @@ async def main():
 
     # S2
     if CAPTURE_S2:
-        await head_line(f"[INFO] S2_TARGET (режим/имя) = {S2_TARGET or 'AUTO_DEFAULT_SINK'}")
+        await head_line(f"[INFO] S2_TARGET (режим/имя) = {S2_TARGET or 'AUTO_BT_AUTO'}")
     else:
         await head_line("[INFO] S2 отключён (CAPTURE_S2=0).")
 
@@ -834,14 +960,14 @@ async def main():
     SM   = SuggestionManager();          await SM.start()
     COALESCE = Coalescer(LIVE, TM);      await COALESCE.start()
 
-    # 1) старт RT-сессий (с попыткой перевода при флаге)
+    # 1) старт RT-сессий
     sessions = []
     if CAPTURE_S2:
         sessions.append(("S2",) + (await start_sm("S2", ENABLE_TRANSLATION)))
     if cap_s1:
         sessions.append(("S1",) + (await start_sm("S1", ENABLE_TRANSLATION)))
     if not sessions:
-        await head_line("[ERROR] Нет активных сессий (оба канала отключены). Включите CAPTURE_S1 и/или CAPTURE_S2.")
+        await head_line("[ERROR] Нет активных сессий (оба канала отключены).")
         await COALESCE.stop(); await TM.stop(); await SM.stop(); await LIVE.stop()
         return
 
@@ -862,7 +988,7 @@ async def main():
             if et == "protocol_error" and _is_translation_schema_error(et, rsn):
                 do_retry = True
         elif st == "timeout" and ENABLE_TRANSLATION:
-            await head_line(f"[{name}] Timeout ожидания RecognitionStarted — пробую без перевода…")
+            await head_line(f"[{name}] Timeout RecognitionStarted — пробую без перевода…")
             do_retry = True
 
         if do_retry:
@@ -879,7 +1005,7 @@ async def main():
                 await head_line(f"[ERROR] {name}: повторный старт без перевода не удался ({st2}: {info2}).")
 
     if not active:
-        await head_line("[ERROR] Ни одна RT-сессия не запустилась. Проверьте ключ/квоты/сеть и перезапустите.")
+        await head_line("[ERROR] Ни одна RT-сессия не запустилась.")
         for t in reader_tasks:
             with contextlib.suppress(Exception): t.cancel()
         await COALESCE.stop(); await TM.stop(); await SM.stop(); await LIVE.stop()
@@ -896,41 +1022,44 @@ async def main():
             still.append(s)
     active = still
     if not active:
-        await head_line("[ERROR] quota_exceeded для всех сессий. Закройте висящие RT-сессии и перезапустите.")
+        await head_line("[ERROR] quota_exceeded для всех сессий.")
         for t in reader_tasks:
             with contextlib.suppress(Exception): t.cancel()
         await COALESCE.stop(); await TM.stop(); await SM.stop(); await LIVE.stop()
         return
 
-    # 4) выбираем sink для S2
+    # 4) кандидаты для S2 и старт захвата + роутер
     tasks = []
-    have_S2 = any(s[0]=="S2" for s in active)
-    actual_s2 = None
+    have_S2 = any(s[0] == "S2" for s in active)
     if have_S2:
-        mode = S2_TARGET or "AUTO_DEFAULT_SINK"
-        if mode in ("AUTO_DEFAULT_SINK","AUTO_BT_SINK","AUTO_ALSA_SINK"):
-            await info_line(f"[S2] режим {mode} — выбираю sink…")
-        else:
-            await info_line(f"[S2] ожидаемый sink: {mode}")
-        actual_s2 = await wait_for_sink(mode, timeout_sec=180)
-        if not actual_s2:
-            await head_line("[ERROR] Не удалось найти подходящий sink для S2.")
-            for s in active:
-                with contextlib.suppress(Exception): await s[4]()
-            for t in reader_tasks:
-                with contextlib.suppress(Exception): t.cancel()
-            await COALESCE.stop(); await TM.stop(); await SM.stop(); await LIVE.stop()
-            return
-        await info_line(f"[S2] выбран sink: {actual_s2}")
+        s2_session = [s for s in active if s[0] == "S2"][0]
+        name, ws, r, send, fin, started, err = s2_session
 
-    # 5) старт захвата
+        candidates = build_s2_candidates(S2_TARGET or "AUTO_BT_AUTO")
+
+        # Если требуем BT но его реально нет — просто сообщаем и фоллбэчим (чтобы не ломать работу)
+        bt_nodes = list_bluez_all()
+        if REQUIRE_BT_FOR_S2 and not any(n.startswith("bluez_output.") for n in bt_nodes):
+            await head_line("[WARN] Не найдено bluez_output.*, хотя REQUIRE_BT_FOR_S2=1. Включаю фоллбэк на ALSA sink.")
+
+        if not candidates:
+            await head_line("[ERROR] Нет подходящих sink для S2 (ни BT, ни ALSA).")
+            with contextlib.suppress(Exception): await fin()
+            active = [s for s in active if s[0] != "S2"]
+            have_S2 = False
+
+        if have_S2:
+            s2ctrl = S2CaptureController(send, SAMPLE_RATE)
+            await s2ctrl.start(candidates[0])
+
+            ROUTE_GUARD = RoutingGuard(s2ctrl, candidates)
+            await ROUTE_GUARD.start()
+            tasks.append(s2ctrl.task)
+
+    # 5) старт захвата S1
     for s in active:
         name, ws, r, send, fin, started, err = s
-        if name == "S2":
-            cmd = ["pw-record","--target",actual_s2,"--properties","stream.capture.sink=true",
-                   "--format","s16","--channels","1","--rate",str(SAMPLE_RATE),"-"]
-            tasks.append(asyncio.create_task(run_pw_record(cmd, send, "S2_capture")))
-        elif name == "S1":
+        if name == "S1":
             cmd = ["pw-record","--target",S1_DEVICE,"--format","s16","--channels","1","--rate",str(SAMPLE_RATE),"-"]
             tasks.append(asyncio.create_task(run_pw_record(cmd, send, "S1_capture")))
 
@@ -945,6 +1074,8 @@ async def main():
         with contextlib.suppress(Exception): await s[4]()  # fin
     for t in reader_tasks + tasks:
         with contextlib.suppress(Exception): t.cancel()
+    if ROUTE_GUARD:
+        await ROUTE_GUARD.stop()
     await asyncio.sleep(0.2)
     await COALESCE.stop(); await TM.stop(); await SM.stop(); await LIVE.stop()
 
