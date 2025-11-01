@@ -28,97 +28,55 @@ if not API_KEY:
     print("ERROR: Добавьте SPEECHMATICS_API=... в .env", file=sys.stderr)
     sys.exit(1)
 
+# ---------- Отладка/вывод ----------
+DEBUG  = ENV.get("DEBUG", "0").lower() in ("1","true","yes")
+
 # ---------- OpenAI / SUGGEST ----------
 OPENAI_API_KEY       = (ENV.get("OPENAI_API") or "").strip()
 ENABLE_SUGGEST       = ENV.get("ENABLE_SUGGEST", "1").lower() in ("1","true","yes")
-SUGGEST_MODEL        = ENV.get("SUGGEST_MODEL", "gpt-5-mini")
+SUGGEST_MODEL        = ENV.get("SUGGEST_MODEL", "gpt-4o-mini")
 SUGGEST_MAX_HISTORY  = int(ENV.get("SUGGEST_MAX_HISTORY", "10"))
 SUGGEST_TIMEOUT      = float(ENV.get("SUGGEST_TIMEOUT", "6.0"))
 SUGGEST_TEMPERATURE  = float(ENV.get("SUGGEST_TEMPERATURE", "0.2"))
 
-# ---- Маршрутизация/захват S2 (мягко, с фоллбэком) ----
+# ---- Маршрутизация/захват S2 ----
 REQUIRE_BT_FOR_S2       = ENV.get("REQUIRE_BT_FOR_S2", "0").lower() in ("1","true","yes")
 ALLOW_S2_ALSA_FALLBACK  = ENV.get("ALLOW_S2_ALSA_FALLBACK", "1").lower() in ("1","true","yes")
+S2_WAIT_FOR_APPEAR_SEC  = float(ENV.get("S2_WAIT_FOR_APPEAR_SEC", "15.0"))  # ждём, когда появится bluez_input/source
+S2_APPEAR_POLL_MS       = int(ENV.get("S2_APPEAR_POLL_MS", "300"))
 
 # ---- Подавление эха ----
 ECHO_SIM_THRESHOLD  = float(ENV.get("ECHO_SIM_THRESHOLD", "0.75"))
 ECHO_WINDOW_SEC     = float(ENV.get("ECHO_WINDOW_SEC", "1.2"))
 MAX_S1_CACHE        = int(ENV.get("MAX_S1_CACHE", "3"))
 
-# --- RU -> EN автоперевод цели (один раз при старте), если в переменной русская строка ---
-def _looks_russian(s: str) -> bool:
-    return bool(_re.search(r"[А-Яа-яЁё]", s or ""))
-
-def _translate_ru_goal_to_en(text: str) -> str:
-    key = OPENAI_API_KEY
-    if not key:
-        return text
-    try:
-        req = urllib.request.Request(
-            "https://api.openai.com/v1/chat/completions",
-            data=json.dumps({
-                "model": SUGGEST_MODEL or "gpt-4o-mini",
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": "Translate the user's goal into concise, natural UK English. Return only the translation text without quotes."
-                    },
-                    {"role": "user", "content": text}
-                ],
-                "temperature": 0,
-                "max_tokens": 120
-            }).encode("utf-8"),
-            method="POST",
-            headers={
-                "Authorization": f"Bearer {key}",
-                "Content-Type": "application/json"
-            }
-        )
-        with urllib.request.urlopen(req, timeout=6.0) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-        out = (data.get("choices") or [{}])[0].get("message", {}).get("content", "") or ""
-        out = out.strip()
-        if out:
-            out = _re.sub(r'^\s*[\"“](.*?)[\"”]\s*$', r'\1', out)
-            print(f'Goal:\n{out}')
-            return out
-    except Exception as e:
-        if DEBUG:
-            print(f"[GOAL] RU->EN translation failed: {e}", file=sys.stderr)
-    return text
-
-_raw_goal = (ENV.get("DIALOG_GOAL_EN") or DIALOG_GOAL_EN_DEFAULT).strip()
-DIALOG_GOAL_EN = _translate_ru_goal_to_en(_raw_goal) if _looks_russian(_raw_goal) else _raw_goal
-DIALOG_CONTEXT_EN = (ENV.get("DIALOG_CONTEXT_EN") or DIALOG_CONTEXT_EN_DEFAULT).strip()
-
-DEBUG  = ENV.get("DEBUG", "0").lower() in ("1","true","yes")
+# ---- Speechmatics ----
 SM_ENDPOINT = ENV.get("SPEECHMATICS_WSS", "wss://eu2.rt.speechmatics.com/v2/")
-
 SAMPLE_RATE = int(ENV.get("SAMPLE_RATE", "16000"))
 ENCODING = "pcm_s16le"
 MAX_DELAY = float(ENV.get("MAX_DELAY", "1.3"))
 MAX_DELAY_MODE = ENV.get("MAX_DELAY_MODE", "flexible")
 EOU_SILENCE = float(ENV.get("EOU_SILENCE", "0.8"))
 
-# live-троттлинг/эвристики
-PARTIAL_DEBOUNCE_MS = int(ENV.get("PARTIAL_DEBOUNCE_MS", "300"))
+# ---- live-троттлинг/эвристики ----
+PARTIAL_DEBOUNCE_MS = int(ENV.get("PARTIAL_DEBOUNCE_MS", "350"))
 MIN_DELTA_CHARS     = int(ENV.get("MIN_DELTA_CHARS", "8"))
 MIN_WORDS_PARTIAL   = int(ENV.get("MIN_WORDS_PARTIAL", "2"))
-SILENCE_FLUSH_MS    = int(ENV.get("SILENCE_FLUSH_MS", "700"))
+SILENCE_FLUSH_MS    = int(ENV.get("SILENCE_FLUSH_MS", "900"))
 EOU_FINALIZE_MS     = int(ENV.get("EOU_FINALIZE_MS", "1100"))
 
-# перевод (только финалы)
+# ---- перевод (только финалы) ----
 ENABLE_TRANSLATION     = ENV.get("ENABLE_TRANSLATION", "0").lower() in ("1","true","yes")
 TRANSLATE_TO           = (ENV.get("TRANSLATE_TO", "ru") or "ru").strip().lower()
 TRANSLATION_WINDOW_MS  = int(ENV.get("TRANSLATION_WINDOW_MS", "2000"))
 
 PRINT_AUDIOADDED    = ENV.get("PRINT_AUDIOADDED", "0").lower() in ("1","true","yes")
 
-# управление захватом линий
+# ---- управление захватом линий ----
 CAPTURE_S1 = ENV.get("CAPTURE_S1", "1").lower() in ("1","true","yes")
 CAPTURE_S2 = ENV.get("CAPTURE_S2", "1").lower() in ("1","true","yes")
 
-# логи
+# ---- логи ----
 LOG_DIR = os.path.expanduser("call_logs"); os.makedirs(LOG_DIR, exist_ok=True)
 LOG_PATH = os.path.join(LOG_DIR, f"call_{dt.datetime.now():%Y%m%d_%H%M%S}.log")
 def ts(): return dt.datetime.now().strftime("%H:%M:%S")
@@ -255,22 +213,15 @@ class LiveManager:
         await self._update_footer_now()
 
     async def print_final_with_extras(self, label: str, text: str, tr_text: str | None = None) -> int:
-        """
-        Печатает финальную реплику с цветами и возвращает msg_id для «сноски».
-        Также печатает перевод (серым) и синий плейсхолдер для SUGGEST.
-        """
         msg_id = next_msg_id()
         t0 = ts()
         label_col = RED if label == "S1" else GRN
-        # Основная реплика
         await print_and_log(f"{t0} | [#{msg_id}] {label_col}{label}{RESET}: {text}")
-        # Перевод (серый)
         if ENABLE_TRANSLATION:
             if tr_text and tr_text.strip():
                 await print_and_log(f"{DIM}{t0} | [#{msg_id}] {label} → RU: {tr_text.strip()}{RESET}")
             else:
                 await print_and_log(f"{DIM}{t0} | [#{msg_id}] {label} → RU: —{RESET}")
-        # Плейсхолдер для SUGGEST
         if ENABLE_SUGGEST and label == "S2":
             await print_and_log(f"{BLU}{t0} |   ↳ SUGGEST[#{msg_id}]: —{RESET}")
         return msg_id
@@ -399,18 +350,16 @@ class SuggestionManager:
         hist_txt = "\n".join(lines) if lines else "(no history yet)"
 
         system_msg = (
-            "You are a concise suggestion generator for a LIVE phone call. "
-            "You speak for the caller (S1). The other party is the agent (S2). "
-            "After reading the recent transcript, output EXACTLY ONE short, natural, goal-driven reply "
-            "the caller (S1) could say NEXT, in English, suitable for the UK. "
-            "Keep it under 20 words, polite, clear, and progressing toward the goal. "
-            "Return ONLY a JSON array with ONE string."
+            "You generate concise, LIVE phone-call reply suggestions for the caller (S1). "
+            "The other party is the agent (S2). After reading the recent transcript, "
+            "output EXACTLY THREE short, natural, goal-driven replies the caller (S1) could say NEXT, "
+            "in English, suitable for the UK. Each ≤ 20 words. Return ONLY a JSON array of THREE strings."
         )
         user_msg = (
             f"Goal: {DIALOG_GOAL_EN}\n"
             f"Context: {DIALOG_CONTEXT_EN}\n\n"
             f"Recent transcript (last {SUGGEST_MAX_HISTORY} turns):\n{hist_txt}\n\n"
-            "Now return a JSON array with ONE suggestion for S1's next reply."
+            "Now return a JSON array with THREE suggestions for S1's next reply."
         )
         return {
             "model": SUGGEST_MODEL,
@@ -419,7 +368,7 @@ class SuggestionManager:
                 {"role": "user", "content": user_msg},
             ],
             "temperature": SUGGEST_TEMPERATURE,
-            "max_tokens": 96,
+            "max_tokens": 160,
         }
 
     async def _generate_suggestions(self, tail: list[tuple[str,str]]):
@@ -455,62 +404,102 @@ def run_cmd(cmd):
     except Exception:
         return ""
 
-def list_node_names():
-    out = run_cmd(["wpctl","status","--name"])
-    return _re.findall(r'([A-Za-z0-9_.:-]+)\s*$', out, flags=_re.M)
+_PREFIX_RE = _re.compile(r'\b((?:bluez|alsa)_(?:input|output|source)\.[A-Za-z0-9_.:-]+)\b')
 
-def list_bluez_all():
-    names = list_node_names()
-    return [n for n in names if n.startswith(("bluez_output.","bluez_input.","bluez_source."))]
+def list_node_names_wpctl():
+    out = run_cmd(["wpctl","status","--name"])
+    return set(_PREFIX_RE.findall(out))
+
+def list_node_names_pwdump():
+    out = run_cmd(["pw-dump"])
+    names = set()
+    # Ищем "node.name": "bluez_input...."
+    for m in _re.finditer(r'"node\.name"\s*:\s*"([^"]+)"', out):
+        n = m.group(1)
+        if n.startswith(("bluez_input.","bluez_source.","bluez_output.","alsa_input.","alsa_output.")):
+            names.add(n)
+    return names
+
+def list_node_names():
+    names = set()
+    names |= list_node_names_wpctl()
+    if not names:
+        names |= list_node_names_pwdump()
+    return sorted(names)
+
+def node_exists(name: str) -> bool:
+    return name in list_node_names()
+
+def list_bluez_nodes():
+    return [n for n in list_node_names() if n.startswith(("bluez_output.","bluez_input.","bluez_source."))]
+
+def is_sink_node(name: str) -> bool:
+    return name.startswith(("alsa_output.","bluez_output."))
+
+def is_source_node(name: str) -> bool:
+    return name.startswith(("alsa_input.","bluez_input.","bluez_source."))
+
+def list_bluez_inputs():
+    return [n for n in list_node_names() if n.startswith(("bluez_input.","bluez_source."))]
 
 def list_bluez_sinks():
     return [n for n in list_node_names() if n.startswith("bluez_output.")]
-
-def find_bt_sink_any():
-    for n in list_node_names():
-        if n.startswith("bluez_output."):
-            return n
-    return ""
-
-def find_alsa_sink_any():
-    for n in list_node_names():
-        if n.startswith("alsa_output."):
-            return n
-    return ""
 
 def get_default_sink_name():
     out = run_cmd(["wpctl", "inspect", "@DEFAULT_AUDIO_SINK@"])
     m = _re.search(r'node\.name\s*=\s*"([^"]+)"', out)
     return m.group(1) if m else ""
 
-def find_hyperx_mic():
-    names = list_node_names()
-    for n in names:
-        if n.startswith("alsa_input.") and ("HyperX" in n or "DuoCast" in n or "usb-" in n or "Trust_PC_Headset" in n):
+def find_mic_source_prefer_usb():
+    for n in list_node_names():
+        if n.startswith("alsa_input.") and any(k in n for k in ("HyperX","DuoCast","usb-","Trust_PC_Headset","Generalplus")):
             return n
-    for n in names:
+    for n in list_node_names():
         if n.startswith("alsa_input."): return n
     return ""
 
+async def wait_for_exact_node(target_name: str, timeout_sec: float) -> bool:
+    t0 = time.monotonic()
+    while (time.monotonic() - t0) < timeout_sec:
+        if node_exists(target_name):
+            return True
+        await asyncio.sleep(S2_APPEAR_POLL_MS/1000.0)
+    return node_exists(target_name)
+
+async def wait_for_any_bluez_input(timeout_sec: float) -> list[str]:
+    t0 = time.monotonic()
+    while (time.monotonic() - t0) < timeout_sec:
+        ins = list_bluez_inputs()
+        if ins:
+            return ins
+        await asyncio.sleep(S2_APPEAR_POLL_MS/1000.0)
+    return list_bluez_inputs()
+
 def build_s2_candidates(primary_mode: str) -> list[str]:
     names = list_node_names()
-    bt_sinks = [n for n in names if n.startswith("bluez_output.")]
+    bt_inputs = [n for n in names if n.startswith(("bluez_input.","bluez_source."))]
+    bt_sinks  = [n for n in names if n.startswith("bluez_output.")]
     alsa_snks = [n for n in names if n.startswith("alsa_output.")]
-    def_snk  = get_default_sink_name()
+    def_snk   = get_default_sink_name()
 
-    if primary_mode and primary_mode not in ("AUTO_BT_SINK","AUTO_BT_AUTO","AUTO_DEFAULT_SINK","AUTO_ALSA_SINK","AUTO_BT_SOURCE"):
+    # Явно задан конкретный нод — используем только его (если существует на текущий момент).
+    if primary_mode and primary_mode not in ("AUTO_BT_SINK","AUTO_BT_AUTO","AUTO_DEFAULT_SINK","AUTO_ALSA_SINK"):
         return [primary_mode] if primary_mode in names else []
 
     cands: list[str] = []
+    # 1) HFP/HSP источники (главный приоритет для звонков)
+    cands.extend(bt_inputs)
+    # 2) A2DP sinks (будем читать monitor)
     cands.extend(bt_sinks)
-
-    if (ALLOW_S2_ALSA_FALLBACK and (not REQUIRE_BT_FOR_S2 or not bt_sinks)):
+    # 3) Фоллбэк к системным sinks (monitor), если разрешено
+    if ALLOW_S2_ALSA_FALLBACK and (not REQUIRE_BT_FOR_S2 or not (bt_inputs or bt_sinks)):
         if def_snk:
             cands.append(def_snk)
         for n in alsa_snks:
             if n != def_snk:
                 cands.append(n)
 
+    # Уникализируем, сохраняя порядок
     seen = set(); uniq = []
     for n in cands:
         if n not in seen:
@@ -518,7 +507,7 @@ def build_s2_candidates(primary_mode: str) -> list[str]:
     return uniq
 
 # --- Инициализация устройств S1/S2 ---
-S1_DEVICE = ENV.get("S1_DEVICE") or find_hyperx_mic()
+S1_DEVICE = ENV.get("S1_DEVICE") or find_mic_source_prefer_usb()
 S2_TARGET = ENV.get("S2_TARGET") or "AUTO_BT_AUTO"
 
 # ------------------- Speechmatics helpers -------------------
@@ -698,19 +687,28 @@ class S2CaptureController:
     def __init__(self, send_func, sample_rate: int):
         self.send_func = send_func
         self.sample_rate = sample_rate
-        self.current_sink = None
+        self.current_node = None
         self.task: asyncio.Task | None = None
 
-    async def start(self, sink_name: str):
-        await head_line(f"[S2_CAPTURE] start → {sink_name}")
-        self.current_sink = sink_name
-        cmd = [
-            "pw-record",
-            "--target", sink_name,
-            "--properties", "stream.capture.sink=true",
-            "--format", "s16", "--channels", "1", "--rate", str(self.sample_rate),
-            "-"
-        ]
+    async def start(self, node_name: str):
+        self.current_node = node_name
+        if is_sink_node(node_name):
+            await head_line(f"[S2_CAPTURE] start (monitor) → {node_name}")
+            cmd = [
+                "pw-record",
+                "--monitor",
+                "--target", node_name,
+                "--format", "s16", "--channels", "1", "--rate", str(self.sample_rate),
+                "-"
+            ]
+        else:
+            await head_line(f"[S2_CAPTURE] start (direct) → {node_name}")
+            cmd = [
+                "pw-record",
+                "--target", node_name,
+                "--format", "s16", "--channels", "1", "--rate", str(self.sample_rate),
+                "-"
+            ]
         self.task = asyncio.create_task(run_pw_record(cmd, self.send_func, "S2_capture"))
 
     async def stop(self):
@@ -719,14 +717,14 @@ class S2CaptureController:
             with contextlib.suppress(Exception):
                 await self.task
             self.task = None
-        self.current_sink = None
+        self.current_node = None
 
-    async def switch_to(self, sink_name: str):
-        if sink_name == self.current_sink:
+    async def switch_to(self, node_name: str):
+        if node_name == self.current_node:
             return
-        await head_line(f"[S2_CAPTURE] switch → {sink_name}")
+        await head_line(f"[S2_CAPTURE] switch ({'monitor' if is_sink_node(node_name) else 'direct'}) → {node_name}")
         await self.stop()
-        await self.start(sink_name)
+        await self.start(node_name)
 
 class RoutingGuard:
     def __init__(self, s2ctrl: S2CaptureController, candidates: list[str]):
@@ -867,9 +865,6 @@ class Coalescer:
         txt = self._joined(label)
         if not txt:
             return
-        tr_now = None
-        if TM:
-            tr_now = await TM.on_utterance_finalized(label)
 
         if 'ROUTE_GUARD' in globals() and ROUTE_GUARD:
             await ROUTE_GUARD.note(label, txt)
@@ -885,6 +880,10 @@ class Coalescer:
                     return
             except Exception:
                 pass
+
+        tr_now = None
+        if TM:
+            tr_now = await TM.on_utterance_finalized(label)
 
         await self.live.clear_live_line(label)
         msg_id = await self.live.print_final_with_extras(label, txt, tr_text=tr_now)
@@ -923,6 +922,52 @@ async def _close_reader_and_ws(sess, reader_task):
         reader_task.cancel()
         await asyncio.sleep(0)
 
+# --- RU -> EN автоперевод цели (после DEBUG объявлен) ---
+def _looks_russian(s: str) -> bool:
+    return bool(_re.search(r"[А-Яа-яЁё]", s or ""))
+
+def _translate_ru_goal_to_en(text: str) -> str:
+    key = OPENAI_API_KEY
+    if not key:
+        return text
+    try:
+        req = urllib.request.Request(
+            "https://api.openai.com/v1/chat/completions",
+            data=json.dumps({
+                "model": SUGGEST_MODEL or "gpt-4o-mini",
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": "Translate the user's goal into concise, natural UK English. Return only the translation text without quotes."
+                    },
+                    {"role": "user", "content": text}
+                ],
+                "temperature": 0,
+                "max_tokens": 120
+            }).encode("utf-8"),
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {key}",
+                "Content-Type": "application/json"
+            }
+        )
+        with urllib.request.urlopen(req, timeout=6.0) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        out = (data.get("choices") or [{}])[0].get("message", {}).get("content", "") or ""
+        out = out.strip()
+        if out:
+            out = _re.sub(r'^\s*[\"“](.*?)[\"”]\s*$', r'\1', out)
+            print(f'Goal:\n{out}')
+            return out
+    except Exception as e:
+        if DEBUG:
+            print(f"[GOAL] RU->EN translation failed: {e}", file=sys.stderr)
+    return text
+
+_raw_goal = (ENV.get("DIALOG_GOAL_EN") or DIALOG_GOAL_EN_DEFAULT).strip()
+DIALOG_GOAL_EN = _translate_ru_goal_to_en(_raw_goal) if _looks_russian(_raw_goal) else _raw_goal
+DIALOG_CONTEXT_EN = (ENV.get("DIALOG_CONTEXT_EN") or DIALOG_CONTEXT_EN_DEFAULT).strip()
+
 # ------------------- main -------------------
 COALESCE: Coalescer | None = None
 LIVE: LiveManager | None = None
@@ -934,10 +979,13 @@ async def main():
     global LIVE, TM, COALESCE, SM, ROUTE_GUARD
     await head_line(f"[INFO] Лог файл: {LOG_PATH}")
 
-    # S1
+    # S1 — только источник (микрофон)
     if CAPTURE_S1:
         if not S1_DEVICE:
             await head_line("[WARN] S1_DEVICE не найден. Отключаю S1.")
+            cap_s1 = False
+        elif not S1_DEVICE.startswith("alsa_input."):
+            await head_line(f"[ERROR] S1_DEVICE='{S1_DEVICE}' не является источником (alsa_input.*). Отключаю S1.")
             cap_s1 = False
         else:
             cap_s1 = True
@@ -946,7 +994,7 @@ async def main():
         cap_s1 = False
         await head_line("[INFO] S1 отключён (CAPTURE_S1=0).")
 
-    # S2
+    # S2 — входящий поток с телефона (HFP/source предпочтителен)
     if CAPTURE_S2:
         await head_line(f"[INFO] S2_TARGET (режим/имя) = {S2_TARGET or 'AUTO_BT_AUTO'}")
     else:
@@ -1035,14 +1083,43 @@ async def main():
         s2_session = [s for s in active if s[0] == "S2"][0]
         name, ws, r, send, fin, started, err = s2_session
 
-        candidates = build_s2_candidates(S2_TARGET or "AUTO_BT_AUTO")
+        # Если задан конкретный target и его нет — ждём его появления
+        explicit = (S2_TARGET and S2_TARGET not in ("AUTO_BT_SINK","AUTO_BT_AUTO","AUTO_DEFAULT_SINK","AUTO_ALSA_SINK"))
+        if explicit and not node_exists(S2_TARGET):
+            await head_line(f"[S2] Ожидаю появление узла {S2_TARGET} (до {S2_WAIT_FOR_APPEAR_SEC:.0f} с). "
+                            f"Во время звонка выберите на телефоне аудио 'Bluetooth-гарнитура/jupiter-Asp'.")
+            ok = await wait_for_exact_node(S2_TARGET, S2_WAIT_FOR_APPEAR_SEC)
+            if not ok:
+                await head_line(f"[ERROR] Узел {S2_TARGET} так и не появился — S2 будет отключён.")
+                with contextlib.suppress(Exception): await fin()
+                active = [s for s in active if s[0] != "S2"]
+                have_S2 = False
 
-        bt_nodes = list_bluez_all()
-        if REQUIRE_BT_FOR_S2 and not any(n.startswith("bluez_output.") for n in bt_nodes):
-            await head_line("[WARN] Не найдено bluez_output.*, хотя REQUIRE_BT_FOR_S2=1. Включаю фоллбэк на ALSA sink.")
+        candidates = []
+        if have_S2:
+            if explicit:
+                candidates = [S2_TARGET]  # уже гарантировали наличие
+            else:
+                # AUTO-режим: сначала пытаемся взять HFP-источник
+                candidates = build_s2_candidates(S2_TARGET or "AUTO_BT_AUTO")
+                if REQUIRE_BT_FOR_S2 and not any(c.startswith(("bluez_input.","bluez_source.")) for c in candidates):
+                    await head_line(f"[S2] Жду появления HFP (bluez_input/source) до {S2_WAIT_FOR_APPEAR_SEC:.0f} с…")
+                    ins = await wait_for_any_bluez_input(S2_WAIT_FOR_APPEAR_SEC)
+                    if ins:
+                        # перестраиваем кандидаты, теперь уже появится input
+                        candidates = build_s2_candidates(S2_TARGET or "AUTO_BT_AUTO")
+                    else:
+                        if ALLOW_S2_ALSA_FALLBACK:
+                            await head_line("[WARN] HFP не появился — разрешён ALSA-фоллбэк, использую monitor дефолтного sink.")
+                            candidates = build_s2_candidates("AUTO_DEFAULT_SINK")
+                        else:
+                            await head_line("[ERROR] HFP не появился, фоллбэк запрещён (ALLOW_S2_ALSA_FALLBACK=0). Отключаю S2.")
+                            with contextlib.suppress(Exception): await fin()
+                            active = [s for s in active if s[0] != "S2"]
+                            have_S2 = False
 
-        if not candidates:
-            await head_line("[ERROR] Нет подходящих sink для S2 (ни BT, ни ALSA).")
+        if have_S2 and not candidates:
+            await head_line("[ERROR] Нет подходящих нод для S2.")
             with contextlib.suppress(Exception): await fin()
             active = [s for s in active if s[0] != "S2"]
             have_S2 = False
@@ -1056,10 +1133,13 @@ async def main():
             await ROUTE_GUARD.start()
             tasks.append(s2ctrl.task)
 
-    # 5) старт захвата S1
+    # 5) старт захвата S1 (строго источник)
     for s in active:
         name, ws, r, send, fin, started, err = s
         if name == "S1":
+            if not S1_DEVICE.startswith("alsa_input."):
+                await head_line(f"[ERROR] Пропуск S1: {S1_DEVICE} не является источником (alsa_input.*)")
+                continue
             cmd = ["pw-record","--target",S1_DEVICE,"--format","s16","--channels","1","--rate",str(SAMPLE_RATE),"-"]
             tasks.append(asyncio.create_task(run_pw_record(cmd, send, "S1_capture")))
 
