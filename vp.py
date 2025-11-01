@@ -36,8 +36,54 @@ SUGGEST_MODEL        = ENV.get("SUGGEST_MODEL", "gpt-4o-mini")
 SUGGEST_MAX_HISTORY  = int(ENV.get("SUGGEST_MAX_HISTORY", "10"))  # брать последние N реплик (S1/S2 совместно)
 SUGGEST_TIMEOUT      = float(ENV.get("SUGGEST_TIMEOUT", "6.0"))   # сек, неблокирующая задача
 SUGGEST_TEMPERATURE  = float(ENV.get("SUGGEST_TEMPERATURE", "0.2"))
-DIALOG_GOAL_EN       = (ENV.get("DIALOG_GOAL_EN") or DIALOG_GOAL_EN_DEFAULT).strip()
-DIALOG_CONTEXT_EN    = (ENV.get("DIALOG_CONTEXT_EN") or DIALOG_CONTEXT_EN_DEFAULT).strip()
+
+# --- RU -> EN автоперевод цели (один раз при старте), если в переменной русская строка ---
+def _looks_russian(s: str) -> bool:
+    return bool(_re.search(r"[А-Яа-яЁё]", s or ""))
+
+def _translate_ru_goal_to_en(text: str) -> str:
+    key = OPENAI_API_KEY
+    if not key:
+        return text
+    try:
+        req = urllib.request.Request(
+            "https://api.openai.com/v1/chat/completions",
+            data=json.dumps({
+                "model": SUGGEST_MODEL or "gpt-4o-mini",
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": "Translate the user's goal into concise, natural UK English. Return only the translation text without quotes."
+                    },
+                    {"role": "user", "content": text}
+                ],
+                "temperature": 0,
+                "max_tokens": 120
+            }).encode("utf-8"),
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {key}",
+                "Content-Type": "application/json"
+            }
+        )
+        with urllib.request.urlopen(req, timeout=6.0) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        out = (data.get("choices") or [{}])[0].get("message", {}).get("content", "") or ""
+        out = out.strip()
+        if out:
+            # убрать возможные кавычки по краям
+            out = _re.sub(r'^\s*[\"“](.*?)[\"”]\s*$', r'\1', out)
+            print(f'Goal:\n{out}')
+            return out
+    except Exception as e:
+        if DEBUG:
+            print(f"[GOAL] RU->EN translation failed: {e}", file=sys.stderr)
+    return text
+
+_raw_goal = (ENV.get("DIALOG_GOAL_EN") or DIALOG_GOAL_EN_DEFAULT).strip()
+DIALOG_GOAL_EN = _translate_ru_goal_to_en(_raw_goal) if _looks_russian(_raw_goal) else _raw_goal
+
+DIALOG_CONTEXT_EN = (ENV.get("DIALOG_CONTEXT_EN") or DIALOG_CONTEXT_EN_DEFAULT).strip()
 
 DEBUG  = ENV.get("DEBUG", "0").lower() in ("1","true","yes")
 SM_ENDPOINT = ENV.get("SPEECHMATICS_WSS", "wss://eu2.rt.speechmatics.com/v2/")
@@ -281,6 +327,10 @@ class SuggestionManager:
         self.queue = asyncio.Queue()
         self.worker_task = None
         self.enabled = ENABLE_SUGGEST and bool(OPENAI_API_KEY)
+        self._eager_latest = None           # список подсказок (3 шт.) из последней “eager” выборки
+        self._last_eager_ms = 0.0
+        self.eager_enabled = SUGGEST_EAGER
+        self._opener = urllib.request.build_opener()  # попытка reuse keep-alive соединения
 
     def add_history(self, label: str, text: str):
         self.history.append((label, text))
