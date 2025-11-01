@@ -5,6 +5,7 @@ import os, sys, asyncio, json, signal, datetime as dt, subprocess, contextlib, t
 import websockets
 import urllib.request, urllib.error
 
+
 # ===================== ТЕСТОВЫЕ ПЕРЕМЕННЫЕ (цель/контекст) =====================
 # Можно править здесь или через .env (см. ниже переменные DIALOG_GOAL_EN / DIALOG_CONTEXT_EN)
 DIALOG_GOAL_EN_DEFAULT    = "I'm calling my electricity provider to arrange and order a smart meter as soon as possible."
@@ -32,7 +33,7 @@ if not API_KEY:
 # ---------- OpenAI / SUGGEST ----------
 OPENAI_API_KEY       = (ENV.get("OPENAI_API") or "").strip()
 ENABLE_SUGGEST       = ENV.get("ENABLE_SUGGEST", "1").lower() in ("1","true","yes")  # можно выключить
-SUGGEST_MODEL        = ENV.get("SUGGEST_MODEL", "gpt-4o-mini")
+SUGGEST_MODEL        = ENV.get("SUGGEST_MODEL", "gpt-5-mini")
 SUGGEST_MAX_HISTORY  = int(ENV.get("SUGGEST_MAX_HISTORY", "10"))  # брать последние N реплик (S1/S2 совместно)
 SUGGEST_TIMEOUT      = float(ENV.get("SUGGEST_TIMEOUT", "6.0"))   # сек, неблокирующая задача
 SUGGEST_TEMPERATURE  = float(ENV.get("SUGGEST_TEMPERATURE", "0.2"))
@@ -327,10 +328,7 @@ class SuggestionManager:
         self.queue = asyncio.Queue()
         self.worker_task = None
         self.enabled = ENABLE_SUGGEST and bool(OPENAI_API_KEY)
-        self._eager_latest = None           # список подсказок (3 шт.) из последней “eager” выборки
-        self._last_eager_ms = 0.0
-        self.eager_enabled = SUGGEST_EAGER
-        self._opener = urllib.request.build_opener()  # попытка reuse keep-alive соединения
+
 
     def add_history(self, label: str, text: str):
         self.history.append((label, text))
@@ -394,18 +392,19 @@ class SuggestionManager:
         system_msg = (
             "You are a concise suggestion generator for a LIVE phone call. "
             "You speak for the caller (S1). The other party is the agent (S2). "
-            "After reading the recent transcript, output EXACTLY three short, natural, goal-driven replies "
+            "After reading the recent transcript, output EXACTLY ONE short, natural, goal-driven reply "
             "the caller (S1) could say NEXT, in English, suitable for the UK. "
-            "Keep each under 20 words, polite, clear, and progressing toward the goal. "
-            "Return ONLY a JSON array of 3 strings."
+            "Keep it under 20 words, polite, clear, and progressing toward the goal. "
+            "Return ONLY a JSON array with ONE string."
         )
 
         user_msg = (
             f"Goal: {DIALOG_GOAL_EN}\n"
             f"Context: {DIALOG_CONTEXT_EN}\n\n"
             f"Recent transcript (last {SUGGEST_MAX_HISTORY} turns):\n{hist_txt}\n\n"
-            "Now return a JSON array of 3 suggestions for S1's next reply."
+            "Now return a JSON array with ONE suggestion for S1's next reply."
         )
+
         return {
             "model": SUGGEST_MODEL,
             "messages": [
@@ -413,7 +412,7 @@ class SuggestionManager:
                 {"role": "user", "content": user_msg},
             ],
             "temperature": SUGGEST_TEMPERATURE,
-            "max_tokens": 160,
+            "max_tokens": 96,
         }
 
     async def _generate_suggestions(self, tail: list[tuple[str,str]]):
