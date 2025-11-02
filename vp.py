@@ -349,11 +349,19 @@ class SuggestionManager:
         lines = [f"{lab}: {txt}" for lab, txt in tail]
         hist_txt = "\n".join(lines) if lines else "(no history yet)"
 
+        # system_msg = (
+        #     "You generate concise, LIVE phone-call reply suggestions for the caller (S1). "
+        #     "The other party is the agent (S2). After reading the recent transcript, "
+        #     "output EXACTLY THREE short, natural, goal-driven replies the caller (S1) could say NEXT, "
+        #     "in English, suitable for the UK. Each ≤ 20 words. Return ONLY a JSON array of THREE strings."
+        # )
         system_msg = (
-            "You generate concise, LIVE phone-call reply suggestions for the caller (S1). "
-            "The other party is the agent (S2). After reading the recent transcript, "
-            "output EXACTLY THREE short, natural, goal-driven replies the caller (S1) could say NEXT, "
-            "in English, suitable for the UK. Each ≤ 20 words. Return ONLY a JSON array of THREE strings."
+            "You are a concise suggestion generator for a LIVE phone call. "
+            "You speak for the caller (S1). The other party is the agent (S2). "
+            "After reading the recent transcript, output EXACTLY ONE short, natural, goal-driven reply "
+            "the caller (S1) could say NEXT, in English, suitable for the UK. "
+            "Keep it under 20 words, polite, clear, and progressing toward the goal. "
+            "Return ONLY a JSON array with ONE string."
         )
         user_msg = (
             f"Goal: {DIALOG_GOAL_EN}\n"
