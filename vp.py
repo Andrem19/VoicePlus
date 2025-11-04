@@ -34,7 +34,7 @@ DEBUG  = ENV.get("DEBUG", "0").lower() in ("1","true","yes")
 # ---------- OpenAI / SUGGEST ----------
 OPENAI_API_KEY       = (ENV.get("OPENAI_API") or "").strip()
 ENABLE_SUGGEST       = ENV.get("ENABLE_SUGGEST", "1").lower() in ("1","true","yes")
-SUGGEST_MODEL        = ENV.get("SUGGEST_MODEL", "gpt-4o-mini")
+SUGGEST_MODEL        = ENV.get("SUGGEST_MODEL", "gpt-4.1-nano")
 SUGGEST_MAX_HISTORY  = int(ENV.get("SUGGEST_MAX_HISTORY", "10"))
 SUGGEST_TIMEOUT      = float(ENV.get("SUGGEST_TIMEOUT", "6.0"))
 SUGGEST_TEMPERATURE  = float(ENV.get("SUGGEST_TEMPERATURE", "0.2"))
@@ -942,7 +942,7 @@ def _translate_ru_goal_to_en(text: str) -> str:
         req = urllib.request.Request(
             "https://api.openai.com/v1/chat/completions",
             data=json.dumps({
-                "model": SUGGEST_MODEL or "gpt-4o-mini",
+                "model": SUGGEST_MODEL or "gpt-4.1-nano",
                 "messages": [
                     {
                         "role": "system",
