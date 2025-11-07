@@ -5,6 +5,13 @@ import os, sys, asyncio, json, signal, datetime as dt, subprocess, contextlib, t
 import websockets
 import urllib.request, urllib.error
 
+# ---------- event loop: uvloop (если установлен) ----------
+try:
+    import uvloop  # type: ignore
+    uvloop.install()
+except Exception:
+    pass
+
 # ===================== ТЕСТОВЫЕ ПЕРЕМЕННЫЕ (цель/контекст) =====================
 DIALOG_GOAL_EN_DEFAULT    = "I'm calling my electricity provider to arrange and order a smart meter as soon as possible."
 DIALOG_CONTEXT_EN_DEFAULT = "United Kingdom context, I am a 35-year-old male customer. Be concise, polite and goal-driven."
@@ -33,13 +40,19 @@ DEBUG  = ENV.get("DEBUG", "0").lower() in ("1","true","yes")
 
 # ---------- Подсказки (локальные модели через reply_engine) ----------
 ENABLE_SUGGEST       = ENV.get("ENABLE_SUGGEST", "1").lower() in ("1","true","yes")
-SUGGEST_MAX_HISTORY  = int(ENV.get("SUGGEST_MAX_HISTORY", "10"))  # для совместимости со стеком истории
-SUGGEST_TIMEOUT      = float(ENV.get("SUGGEST_TIMEOUT", "6.0"))   # не используется в локальном режиме
-SUGGEST_TEMPERATURE  = float(ENV.get("SUGGEST_TEMPERATURE", "0.2"))  # не используется
-SUGGEST_MODEL        = ENV.get("SUGGEST_MODEL", "gpt-4.1-nano")   # используется только в RU->EN переводе цели
+SUGGEST_MAX_HISTORY  = int(ENV.get("SUGGEST_MAX_HISTORY", "10"))
+SUGGEST_TIMEOUT      = float(ENV.get("SUGGEST_TIMEOUT", "6.0"))
+SUGGEST_TEMPERATURE  = float(ENV.get("SUGGEST_TEMPERATURE", "0.2"))
+SUGGEST_MODEL        = ENV.get("SUGGEST_MODEL", "gpt-4.1-nano")
 
-# ---------- OpenAI (только для автоперевода цели RU->EN при наличии ключа) ----------
-OPENAI_API_KEY       = (ENV.get("OPENAI_API") or "").strip()
+# ---------- OpenAI (RU->EN перевод цели + полезные фразы) ----------
+OPENAI_API_KEY         = (ENV.get("OPENAI_API") or "").strip()
+PHRASES_ENABLE         = ENV.get("PHRASES_ENABLE", "1").lower() in ("1","true","yes")
+PHRASES_MIN            = int(ENV.get("PHRASES_MIN", "6"))     # нижняя граница (5–10)
+PHRASES_MAX            = int(ENV.get("PHRASES_MAX", "10"))    # верхняя граница
+PHRASES_MODEL          = ENV.get("PHRASES_MODEL", SUGGEST_MODEL or "gpt-4.1-nano")
+PHRASES_IN_CONTEXT     = ENV.get("PHRASES_IN_CONTEXT", "1").lower() in ("1","true","yes")
+PHRASE_MAX_WORDS       = int(ENV.get("PHRASE_MAX_WORDS", "12"))  # не длиннее 12 слов
 
 # ---- Маршрутизация/захват S2 ----
 REQUIRE_BT_FOR_S2       = ENV.get("REQUIRE_BT_FOR_S2", "0").lower() in ("1","true","yes")
@@ -56,27 +69,38 @@ MAX_S1_CACHE        = int(ENV.get("MAX_S1_CACHE", "3"))
 SM_ENDPOINT = ENV.get("SPEECHMATICS_WSS", "wss://eu2.rt.speechmatics.com/v2/")
 SAMPLE_RATE = int(ENV.get("SAMPLE_RATE", "16000"))
 ENCODING = "pcm_s16le"
-MAX_DELAY = float(ENV.get("MAX_DELAY", "1.3"))
-MAX_DELAY_MODE = ENV.get("MAX_DELAY_MODE", "flexible")
-EOU_SILENCE = float(ENV.get("EOU_SILENCE", "0.8"))
 
-# ---- live-троттлинг/эвристики ----
+# низкая задержка: фиксируем малый max_delay и быстрый EOU
+MAX_DELAY       = float(ENV.get("MAX_DELAY", "0.7"))
+MAX_DELAY_MODE  = ENV.get("MAX_DELAY_MODE", "fixed")
+EOU_SILENCE     = float(ENV.get("EOU_SILENCE", "0.6"))
+OPERATING_POINT = ENV.get("OPERATING_POINT", "standard")  # standard / enhanced
+
+# ---- live-троттлинг/эвристики (UI/коалесцер) ----
 PARTIAL_DEBOUNCE_MS = int(ENV.get("PARTIAL_DEBOUNCE_MS", "350"))
 MIN_DELTA_CHARS     = int(ENV.get("MIN_DELTA_CHARS", "8"))
 MIN_WORDS_PARTIAL   = int(ENV.get("MIN_WORDS_PARTIAL", "2"))
-SILENCE_FLUSH_MS    = int(ENV.get("SILENCE_FLUSH_MS", "900"))
-EOU_FINALIZE_MS     = int(ENV.get("EOU_FINALIZE_MS", "1100"))
+SILENCE_FLUSH_MS    = int(ENV.get("SILENCE_FLUSH_MS", "400"))
+EOU_FINALIZE_MS     = int(ENV.get("EOU_FINALIZE_MS", "800"))
 
-# ---- перевод (только финалы) ----
-ENABLE_TRANSLATION     = ENV.get("ENABLE_TRANSLATION", "0").lower() in ("1","true","yes")
-TRANSLATE_TO           = (ENV.get("TRANSLATE_TO", "ru") or "ru").strip().lower()
-TRANSLATION_WINDOW_MS  = int(ENV.get("TRANSLATION_WINDOW_MS", "2000"))
+# ---- перевод ----
+ENABLE_TRANSLATION       = ENV.get("ENABLE_TRANSLATION", "0").lower() in ("1","true","yes")
+TRANSLATE_TO             = (ENV.get("TRANSLATE_TO", "ru") or "ru").strip().lower()
+TRANSLATION_WINDOW_MS    = int(ENV.get("TRANSLATION_WINDOW_MS", "1400"))
+TRANSLATION_PARTIALS     = ENV.get("TRANSLATION_PARTIALS", "1").lower() in ("1","true","yes")
 
 PRINT_AUDIOADDED    = ENV.get("PRINT_AUDIOADDED", "0").lower() in ("1","true","yes")
 
 # ---- управление захватом линий ----
 CAPTURE_S1 = ENV.get("CAPTURE_S1", "1").lower() in ("1","true","yes")
 CAPTURE_S2 = ENV.get("CAPTURE_S2", "1").lower() in ("1","true","yes")
+
+# ---- аудио-порции (уменьшаем для латентности) ----
+AUDIO_CHUNK_MS = int(ENV.get("AUDIO_CHUNK_MS", "50"))  # ~50 ms по умолчанию
+BYTES_PER_MS   = int(SAMPLE_RATE * 1 * 2 / 1000)       # mono, s16
+
+# ---- WebSocket компрессия ----
+WS_DISABLE_COMPRESSION = ENV.get("WS_DISABLE_COMPRESSION", "1").lower() in ("1","true","yes")
 
 # ---- логи ----
 LOG_DIR = os.path.expanduser("call_logs"); os.makedirs(LOG_DIR, exist_ok=True)
@@ -154,7 +178,7 @@ class LiveManager:
     async def start(self):
         self.active = True
         if self.use_rich:
-            self.live = Live(self._render_footer(), console=self.console, refresh_per_second=8, transient=False)
+            self.live = Live(self._render_footer(), console=self.console, refresh_per_second=6, transient=False)
             self.live.start()
         self._flusher_task = asyncio.create_task(self._silence_flusher())
 
@@ -224,7 +248,6 @@ class LiveManager:
                 await print_and_log(f"{DIM}{t0} | [#{msg_id}] {label} → RU: {tr_text.strip()}{RESET}")
             else:
                 await print_and_log(f"{DIM}{t0} | [#{msg_id}] {label} → RU: —{RESET}")
-        # ВАЖНО: НЕ печатаем placeholder '↳ SUGGEST[...] —'
         return msg_id
 
 # ------------------- менеджер перевода -------------------
@@ -253,7 +276,8 @@ class TranslationManager:
             return
         self._parts[label].append(text)
         pend = self._pending[label]
-        if pend and not pend["printed"] and (time.monotonic() * 1000.0) <= pend["deadline_ms"]:
+        now_ms = time.monotonic() * 1000.0
+        if pend and not pend["printed"] and now_ms <= pend["deadline_ms"]:
             tr = self._joined(label)
             if tr:
                 await print_and_log(f"{ts()} | {label} → RU: {tr}")
@@ -273,7 +297,8 @@ class TranslationManager:
         return None
 
     async def on_new_utterance_started(self, label: str):
-        self._pending[label] = None
+        now_ms = time.monotonic() * 1000.0
+        self._pending[label] = {"deadline_ms": now_ms + TRANSLATION_WINDOW_MS, "printed": False}
         self._parts[label].clear()
 
     async def _watchdog(self):
@@ -295,20 +320,15 @@ class TranslationManager:
 from reply_engine import ReplyEngine  # модуль из файла reply_engine.py
 
 class SuggestionManager:
-    """
-    Адаптер над ReplyEngine.
-    - Во время партиалов S2 даёт быстрые подсказки (llama3.2:1b).
-    - На финале S2 — краткая финальная (та же модель).
-    """
+    """FAST на партиалах S2 (llama1B), FINAL на финалах S2 (та же модель)."""
     def __init__(self, goal_en: str, context_en: str):
         self.enabled = ENABLE_SUGGEST
         self.engine = ReplyEngine(goal=goal_en, context=context_en)
         self.queue = asyncio.Queue()
         self.worker_task: asyncio.Task | None = None
-        # анти-спам для вывода (доп. к внутреннему троттлингу движка)
         self._last_fast_text = ""
         self._last_fast_ts_ms = 0.0
-        self._fast_dedupe_window_ms = 8000.0  # не печатать одинаковое в течение 8с
+        self._fast_dedupe_window_ms = 8000.0
 
     def add_history(self, label: str, text: str):
         self.engine.add_history(label, text)
@@ -344,7 +364,6 @@ class SuggestionManager:
                     text = job.get("partial") or ""
                     reply = await self.engine.fast_reply_from_partial(text)
                     if reply:
-                        # дедупликация и минимальный интервал вывода
                         now_ms = time.monotonic() * 1000.0
                         if (reply == self._last_fast_text) and ((now_ms - self._last_fast_ts_ms) < self._fast_dedupe_window_ms):
                             pass
@@ -473,10 +492,17 @@ S2_TARGET = ENV.get("S2_TARGET") or "AUTO_BT_AUTO"
 
 # ------------------- Speechmatics helpers -------------------
 async def connect_ws(url, headers):
+    # отключаем компрессию по возможности
+    opts = {"max_size": None}
+    if WS_DISABLE_COMPRESSION:
+        opts["compression"] = None
     try:
-        return await websockets.connect(url, additional_headers=headers, max_size=None)
+        return await websockets.connect(url, additional_headers=headers, **opts)  # type: ignore
     except TypeError:
-        return await websockets.connect(url, extra_headers=headers, max_size=None)
+        try:
+            return await websockets.connect(url, extra_headers=headers, **opts)  # type: ignore
+        except TypeError:
+            return await websockets.connect(url, **opts)
 
 def _text_from_transcript_results(d: dict) -> str:
     words = []
@@ -515,7 +541,7 @@ async def start_sm(label: str, want_translation: bool):
         "enable_partials": True,
         "max_delay": MAX_DELAY,
         "max_delay_mode": MAX_DELAY_MODE,
-        "operating_point": "enhanced",
+        "operating_point": OPERATING_POINT,
         "conversation_config": {"end_of_utterance_silence_trigger": EOU_SILENCE},
         "audio_filtering_config": {"volume_threshold": 0},
     }
@@ -529,7 +555,7 @@ async def start_sm(label: str, want_translation: bool):
     if want_translation:
         payload["translation_config"] = {
             "target_languages": [TRANSLATE_TO],
-            "enable_partials": False
+            "enable_partials": bool(TRANSLATION_PARTIALS)
         }
 
     await ws.send(json.dumps(payload))
@@ -569,7 +595,9 @@ async def start_sm(label: str, want_translation: bool):
                         await TM.on_translation_chunk(label, tr)
 
                 elif m == "AddPartialTranslation":
-                    pass
+                    tr = _extract_translation(data)
+                    if tr and TM:
+                        await TM.on_translation_chunk(label, tr)
 
                 elif m == "Error":
                     first_error["type"] = data.get("type")
@@ -609,6 +637,7 @@ async def run_pw_record(cmd, on_chunk, label):
 
     last_t = time.monotonic()
     _bytes_box = [0]
+    read_size = max(2, BYTES_PER_MS * max(10, AUDIO_CHUNK_MS))  # >=10ms защиты
 
     async def pump_stderr():
         while True:
@@ -633,7 +662,7 @@ async def run_pw_record(cmd, on_chunk, label):
 
     try:
         while True:
-            chunk = await proc.stdout.read(3200)  # ~100мс @ 16kHz mono s16
+            chunk = await proc.stdout.read(read_size)
             if not chunk: break
             _bytes_box[0] += len(chunk)
             await on_chunk(chunk)
@@ -766,7 +795,7 @@ class RoutingGuard:
         except asyncio.CancelledError:
             pass
 
-# ------------------- Коалесцер реплик (FAST на партиалах S2) -------------------
+# ------------------- Коалесцер реплик -------------------
 class Coalescer:
     def __init__(self, live: LiveManager, tm: TranslationManager | None):
         self.live = live
@@ -888,28 +917,22 @@ async def _close_reader_and_ws(sess, reader_task):
         reader_task.cancel()
         await asyncio.sleep(0)
 
-# --- RU -> EN автоперевод цели (опционально, при наличии OPENAI_API) ---
+# ------------------- OpenAI helpers: RU->EN цель + полезные фразы -------------------
 def _looks_russian(s: str) -> bool:
     return bool(_re.search(r"[А-Яа-яЁё]", s or ""))
 
-def _translate_ru_goal_to_en(text: str) -> str:
+def _openai_chat(messages, model: str, temperature: float = 0.0, max_tokens: int = 200, timeout: float = 8.0) -> str:
     key = OPENAI_API_KEY
     if not key:
-        return text
+        return ""
     try:
         req = urllib.request.Request(
             "https://api.openai.com/v1/chat/completions",
             data=json.dumps({
-                "model": SUGGEST_MODEL or "gpt-4.1-nano",
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": "Translate the user's goal into concise, natural UK English. Return only the translation text without quotes."
-                    },
-                    {"role": "user", "content": text}
-                ],
-                "temperature": 0,
-                "max_tokens": 120
+                "model": model,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens
             }).encode("utf-8"),
             method="POST",
             headers={
@@ -917,29 +940,117 @@ def _translate_ru_goal_to_en(text: str) -> str:
                 "Content-Type": "application/json"
             }
         )
-        with urllib.request.urlopen(req, timeout=6.0) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         out = (data.get("choices") or [{}])[0].get("message", {}).get("content", "") or ""
-        out = out.strip()
-        if out:
-            out = _re.sub(r'^\s*[\"“](.*?)[\"”]\s*$', r'\1', out)
-            print(f'Goal:\n{out}')
-            return out
+        return out.strip()
     except Exception as e:
         if DEBUG:
-            print(f"[GOAL] RU->EN translation failed: {e}", file=sys.stderr)
+            print(f"[OPENAI] request failed: {e}", file=sys.stderr)
+        return ""
+
+def _translate_ru_goal_to_en(text: str) -> str:
+    """
+    Перевод цели RU->EN (если цель на русском). Возвращает EN-строку.
+    Печатает Goal: ... для удобства, чтобы соответствовать текущему UX.
+    """
+    if not OPENAI_API_KEY:
+        return text
+    msg = [
+        {"role": "system", "content": "Translate the user's goal into concise, natural UK English. Return only the translation text without quotes."},
+        {"role": "user", "content": text}
+    ]
+    out = _openai_chat(msg, SUGGEST_MODEL or "gpt-4.1-nano", temperature=0.0, max_tokens=120, timeout=8.0)
+    if out:
+        out = _re.sub(r'^\s*[\"“](.*?)[\"”]\s*$', r'\1', out.strip())
+        print(f"Goal:\n{out}")
+        return out
     return text
 
+def _generate_helpful_phrases(goal_en: str, context_en: str, n_min: int, n_max: int, max_words: int) -> list[str]:
+    """
+    Генерация 5–10 коротких полезных фраз (EN, UK tone) для звонка.
+    Каждая фраза без кавычек, по одной на строку, ≤ max_words слов.
+    """
+    if not (OPENAI_API_KEY and PHRASES_ENABLE):
+        return []
+    n_min = max(1, min(n_min, n_max))
+    n_max = max(n_min, n_max)
+
+    system = (
+        "You are a UK call coach for a live phone conversation. "
+        "Given the goal and context, produce short, natural UK-English phrases "
+        "the caller (S1) can say during the call. Each on its own line, no numbering, "
+        f"no quotes, and no comments. Keep each within {max_words} words."
+    )
+    user = (
+        f"Goal: {goal_en}\n"
+        f"Context: {context_en}\n\n"
+        f"Return between {n_min} and {n_max} distinct lines of ready-to-say phrases."
+    )
+    raw = _openai_chat(
+        messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+        model=PHRASES_MODEL or "gpt-4.1-nano",
+        temperature=0.2,
+        max_tokens=256,
+        timeout=8.0
+    )
+    if not raw:
+        return []
+
+    lines = [x.strip() for x in raw.splitlines()]
+    out: list[str] = []
+    for ln in lines:
+        if not ln:
+            continue
+        # снять любые маркеры списков
+        ln = _re.sub(r"^\s*[\-\*\u2022\d\.\)\]]+\s*", "", ln).strip()
+        # снять внешние кавычки
+        if len(ln) >= 2 and (ln[0] in "\"'“”‘’`") and (ln[-1] in "\"'“”‘’`"):
+            ln = ln[1:-1].strip()
+        if ln:
+            out.append(ln)
+        if len(out) >= n_max:
+            break
+
+    # если модель вернула меньше — ладно, не дуть щёки
+    return out
+
+# --- Загрузка цели, перевода и фраз ---
 _raw_goal = (ENV.get("DIALOG_GOAL_EN") or DIALOG_GOAL_EN_DEFAULT).strip()
-DIALOG_GOAL_EN = _translate_ru_goal_to_en(_raw_goal) if _looks_russian(_raw_goal) else _raw_goal
+if _looks_russian(_raw_goal):
+    DIALOG_GOAL_EN = _translate_ru_goal_to_en(_raw_goal)
+else:
+    DIALOG_GOAL_EN = _raw_goal
+
 DIALOG_CONTEXT_EN = (ENV.get("DIALOG_CONTEXT_EN") or DIALOG_CONTEXT_EN_DEFAULT).strip()
 
+# Список полезных фраз (если доступен OPENAI_API и включено PHRASES_ENABLE)
+DIALOG_PHRASES_EN: list[str] = []
+try:
+    DIALOG_PHRASES_EN = _generate_helpful_phrases(
+        DIALOG_GOAL_EN, DIALOG_CONTEXT_EN, PHRASES_MIN, PHRASES_MAX, PHRASE_MAX_WORDS
+    )
+    if DIALOG_PHRASES_EN:
+        print("Phrases (EN):")
+        for i, p in enumerate(DIALOG_PHRASES_EN, 1):
+            print(f"  {i}. {p}")
+except Exception as _e:
+    if DEBUG:
+        print(f"[PHRASES] generation failed: {_e}", file=sys.stderr)
+    DIALOG_PHRASES_EN = []
+
+# Если хотим подмешать фразы в контекст для ReplyEngine (сильно помогает кратким моделям)
+if PHRASES_IN_CONTEXT and DIALOG_PHRASES_EN:
+    _ph = " | ".join(DIALOG_PHRASES_EN[:6])  # ограничим, чтобы не раздувать промпт
+    DIALOG_CONTEXT_EN = f"{DIALOG_CONTEXT_EN}  Helpful ready-to-say phrases for S1: {_ph}"
+
 # ------------------- main -------------------
-COALESCE: Coalescer | None = None
-LIVE: LiveManager | None = None
-TM: TranslationManager | None = None
-SM: SuggestionManager | None = None
-ROUTE_GUARD: RoutingGuard | None = None
+COALESCE: 'Coalescer | None' = None
+LIVE: 'LiveManager | None' = None
+TM: 'TranslationManager | None' = None
+SM: 'SuggestionManager | None' = None
+ROUTE_GUARD: 'RoutingGuard | None' = None
 
 async def main():
     global LIVE, TM, COALESCE, SM, ROUTE_GUARD
@@ -960,7 +1071,7 @@ async def main():
         cap_s1 = False
         await head_line("[INFO] S1 отключён (CAPTURE_S1=0).")
 
-    # S2 — входящий поток с телефона (HFP/source предпочтителен)
+    # S2 — входящий поток с телефона
     if CAPTURE_S2:
         await head_line(f"[INFO] S2_TARGET (режим/имя) = {S2_TARGET or 'AUTO_BT_AUTO'}")
     else:
