@@ -1,750 +1,1303 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-Realtime ASR (local faster-whisper) + Robust 2-speaker diarisation (online ECAPA + smoothing) + optional async EN↔RU translation.
 
-Goals now:
-- PRIORITY: capture every utterance quickly and assign the right speaker (S1/S2) with minimal lag.
-- Translation runs in a separate thread and NEVER blocks ASR output. You can turn it off.
-- No LLM suggestions in this build.
+import os, sys, asyncio, json, signal, datetime as dt, subprocess, contextlib, time, re as _re
+import websockets
+import urllib.request, urllib.error
 
-What changed vs previous version:
-- Stronger external VAD and stricter no-speech filtering ⇒ fewer “phantom” lines in silence.
-- Online ECAPA diariser on CPU with:
-    • two prototype centroids (S1/S2) that adapt slowly;
-    • a small pending queue: we re-classify the last few segments once both prototypes exist, then flush,
-      which stabilises “who is who” without noticeable delay (~0.6–1.0 s).
-    • hysteresis + cooldown to avoid S1↔S2 flip-flops.
-- Anti-fragmentation merge only after diariser stabilizes; short back-to-back pieces from the same speaker are merged.
-- Removed initial_prompt to reduce hallucinations (“contact us”, etc.).
-- Higher no_speech_threshold and min segment duration; plus lexical/length gate to drop junk.
-
-Local files required (no network):
-  Whisper dir (~/.cache/whisper/large-v3):
-    model.bin, tokenizer.json, vocabulary.json, config.json, preprocessor_config.json
-  (Optional) Translators in local HF cache:
-    Helsinki-NLP/opus-mt-en-ru, Helsinki-NLP/opus-mt-ru-en (safetensors only)
-  (Optional) Speaker model in local HF cache:
-    speechbrain/spkrec-ecapa-voxceleb
-
-Console commands:
-  :me s1 | :me s2     set who is YOU (for your own reference in logs)
-  :swap               swap who is YOU
-  :translate on|off   enable/disable async translation
-"""
-
-import os
-
-# =========================
-# CONFIG
-# =========================
-ASR_MODEL_DIR              = os.path.expanduser("~/.cache/whisper/large-v3")  # 5 files from Systran/faster-whisper-<model>
-DEVICE                     = "cuda"       # "cuda" | "cpu"
-COMPUTE_TYPE               = "float16"    # "int8_float16" if very low VRAM
-
-# Whisper decode tuning (fast + stable)
-WHISPER_BEAM_SIZE          = 2
-WHISPER_TEMP               = 0.0
-WHISPER_WITHOUT_TS         = True
-WHISPER_CONDITION_PREV     = False
-WHISPER_INTERNAL_VAD       = False        # we use external VAD
-WHISPER_NO_SPEECH_TH       = 0.80         # stricter: drop more silence
-WHISPER_COMP_RATIO_TH      = 2.4          # default guard
-WHISPER_LOGPROB_TH         = -1.0         # default guard
-
-# VAD / segmentation (balance completeness vs speed)
-FRAME_MS                   = 20
-VAD_AGGR                   = 3            # stricter; fewer false starts
-SILENCE_TAIL_MS            = 800          # longer tail → fewer clipped endings
-MAX_SEGMENT_S              = 14.0
-MIN_SEGMENT_MS             = 1400
-MIN_ACTIVE_FRAMES          = 5
-
-# Noise gate calibration
-CALIBRATE_SECS             = 0.8
-ENERGY_MARGIN_DB           = 6.0
-ENERGY_DB_MIN              = -50.0
-ENERGY_DB_MAX              = -30.0
-
-# Merge behaviour (same-speaker, back-to-back)
-MERGE_GAP_S_MAX            = 1.4
-MERGE_WINDOW_S_MAX         = 9.0
-MERGE_WORDS_MAX            = 7
-
-# Pending queue (diariser stabilisation)
-PENDING_MAX_ITEMS          = 6
-PENDING_MAX_AGE_S          = 1.0
-
-# Diarisation (ECAPA online, CPU)
-USE_ECAPA_IF_AVAILABLE     = True
-REASSIGN_COOLDOWN_S        = 0.80
-SIM_THRESHOLD_NEW          = 0.55
-SIM_DELTA_STABLE           = 0.05
-PROTOTYPE_MOMENTUM         = 0.10
-
-# Translation (async, non-blocking)
-TRANSLATE_ENABLED_DEFAULT  = True
-TRANSLATE_TIMEOUT_S        = 3.0
-
-# Audio device
-DEVICE_INDEX               = 2
-INPUT_SR                   = 48000
-ASR_SR                     = 16000
-
-LOG_PATH                   = "conversation_log.jsonl"
-
-# HF caches (strictly local)
-CACHE_ROOT = os.path.expanduser("~/.cache/hf")
-os.environ.setdefault("HF_HOME", CACHE_ROOT)
-os.environ.setdefault("HUGGINGFACE_HUB_CACHE", os.path.join(CACHE_ROOT, "hub"))
-os.environ.setdefault("TRANSFORMERS_CACHE", os.path.join(CACHE_ROOT, "transformers"))
-os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "0")
-os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
-os.environ.setdefault("ORT_LOG_SEVERITY_LEVEL", "4")
-os.environ.setdefault("CT2_VERBOSE", "0")
-os.makedirs(os.environ["HUGGINGFACE_HUB_CACHE"], exist_ok=True)
-os.makedirs(os.environ["TRANSFORMERS_CACHE"], exist_ok=True)
-
-# =========================
-# IMPORTS
-# =========================
-import re
-import sys
-import time
-import json
-import math
-import queue
-import threading
-from typing import Optional, Tuple, List, Deque, Dict, Any
-from collections import deque
-from fractions import Fraction
-
-import numpy as np
-import sounddevice as sd
-import webrtcvad
-from scipy import signal
-from faster_whisper import WhisperModel
-
-# Optional modules
-_TRANSLATORS_OK = False
+# ---------- event loop: uvloop (если установлен) ----------
 try:
-    from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, pipeline
-    _TRANSFORMERS_AVAILABLE = True
+    import uvloop  # type: ignore
+    uvloop.install()
 except Exception:
-    _TRANSFORMERS_AVAILABLE = False
+    pass
 
-_HF_AVAILABLE = False
+# ===================== ТЕСТОВЫЕ ПЕРЕМЕННЫЕ (цель/контекст) =====================
+DIALOG_GOAL_EN_DEFAULT    = "I'm calling my electricity provider to arrange and order a smart meter as soon as possible."
+DIALOG_CONTEXT_EN_DEFAULT = "United Kingdom context, I am a 35-year-old male customer. Be concise, polite and goal-driven."
+
+# ===================== ГЛОБАЛЬНЫЙ ФЛАГ ПАУЗЫ =====================
+APP_PAUSED = False
+
+# ------------------- конфиг / окружение -------------------
+def load_env(path=".env"):
+    cfg = {}
+    if os.path.exists(path):
+        for line in open(path, "r", encoding="utf-8"):
+            s = line.strip()
+            if not s or s.startswith("#") or "=" not in s:
+                continue
+            k, v = s.split("=", 1)
+            cfg[k.strip()] = v.strip().strip('"').strip("'")
+    return cfg
+
+ENV = load_env(".env")
+
+API_KEY = ENV.get("SPEECHMATICS_API") or ENV.get("SPEECHMATICS_API_KEY") or ""
+if not API_KEY:
+    print("ERROR: Добавьте SPEECHMATICS_API=... в .env", file=sys.stderr)
+    sys.exit(1)
+
+# ---------- Отладка/вывод ----------
+DEBUG  = ENV.get("DEBUG", "0").lower() in ("1","true","yes")
+
+# ---------- Подсказки (локальные модели через reply_engine) ----------
+ENABLE_SUGGEST       = ENV.get("ENABLE_SUGGEST", "1").lower() in ("1","true","yes")
+SUGGEST_MAX_HISTORY  = int(ENV.get("SUGGEST_MAX_HISTORY", "10"))
+SUGGEST_TIMEOUT      = float(ENV.get("SUGGEST_TIMEOUT", "6.0"))
+SUGGEST_TEMPERATURE  = float(ENV.get("SUGGEST_TEMPERATURE", "0.2"))
+SUGGEST_MODEL        = ENV.get("SUGGEST_MODEL", "gpt-4.1-nano")
+
+# ---------- OpenAI (RU->EN перевод цели + полезные фразы) ----------
+OPENAI_API_KEY         = (ENV.get("OPENAI_API") or "").strip()
+PHRASES_ENABLE         = ENV.get("PHRASES_ENABLE", "1").lower() in ("1","true","yes")
+PHRASES_MIN            = int(ENV.get("PHRASES_MIN", "6"))      # нижняя граница (5–10)
+PHRASES_MAX            = int(ENV.get("PHRASES_MAX", "10"))     # верхняя граница
+PHRASES_MODEL          = ENV.get("PHRASES_MODEL", SUGGEST_MODEL or "gpt-4.1-nano")
+PHRASES_IN_CONTEXT     = ENV.get("PHRASES_IN_CONTEXT", "1").lower() in ("1","true","yes")
+PHRASE_MAX_WORDS       = int(ENV.get("PHRASE_MAX_WORDS", "12"))  # не длиннее 12 слов
+
+# ---- Маршрутизация/захват S2 ----
+REQUIRE_BT_FOR_S2       = ENV.get("REQUIRE_BT_FOR_S2", "0").lower() in ("1","true","yes")
+ALLOW_S2_ALSA_FALLBACK  = ENV.get("ALLOW_S2_ALSA_FALLBACK", "1").lower() in ("1","true","yes")
+S2_WAIT_FOR_APPEAR_SEC  = float(ENV.get("S2_WAIT_FOR_APPEAR_SEC", "15.0"))
+S2_APPEAR_POLL_MS       = int(ENV.get("S2_APPEAR_POLL_MS", "300"))
+
+# ---- Подавление эха ----
+ECHO_SIM_THRESHOLD  = float(ENV.get("ECHO_SIM_THRESHOLD", "0.75"))
+ECHO_WINDOW_SEC     = float(ENV.get("ECHO_WINDOW_SEC", "1.2"))
+MAX_S1_CACHE        = int(ENV.get("MAX_S1_CACHE", "3"))
+
+# ---- Speechmatics ----
+SM_ENDPOINT = ENV.get("SPEECHMATICS_WSS", "wss://eu2.rt.speechmatics.com/v2/")
+SAMPLE_RATE = int(ENV.get("SAMPLE_RATE", "16000"))
+ENCODING = "pcm_s16le"
+
+# низкая задержка: фиксируем малый max_delay и быстрый EOU
+MAX_DELAY       = float(ENV.get("MAX_DELAY", "0.7"))
+MAX_DELAY_MODE  = ENV.get("MAX_DELAY_MODE", "fixed")
+EOU_SILENCE     = float(ENV.get("EOU_SILENCE", "0.6"))
+OPERATING_POINT = ENV.get("OPERATING_POINT", "standard")  # standard / enhanced
+
+# ---- live-троттлинг/эвристики (UI/коалесцер) ----
+PARTIAL_DEBOUNCE_MS = int(ENV.get("PARTIAL_DEBOUNCE_MS", "350"))
+MIN_DELTA_CHARS     = int(ENV.get("MIN_DELTA_CHARS", "8"))
+MIN_WORDS_PARTIAL   = int(ENV.get("MIN_WORDS_PARTIAL", "2"))
+SILENCE_FLUSH_MS    = int(ENV.get("SILENCE_FLUSH_MS", "400"))
+EOU_FINALIZE_MS     = int(ENV.get("EOU_FINALIZE_MS", "800"))
+
+# ---- перевод ----
+ENABLE_TRANSLATION       = ENV.get("ENABLE_TRANSLATION", "0").lower() in ("1","true","yes")
+TRANSLATE_TO             = (ENV.get("TRANSLATE_TO", "ru") or "ru").strip().lower()
+TRANSLATION_WINDOW_MS    = int(ENV.get("TRANSLATION_WINDOW_MS", "1400"))
+TRANSLATION_PARTIALS     = ENV.get("TRANSLATION_PARTIALS", "1").lower() in ("1","true","yes")
+
+PRINT_AUDIOADDED    = ENV.get("PRINT_AUDIOADDED", "0").lower() in ("1","true","yes")
+
+# ---- управление захватом линий ----
+CAPTURE_S1 = ENV.get("CAPTURE_S1", "1").lower() in ("1","true","yes")
+CAPTURE_S2 = ENV.get("CAPTURE_S2", "1").lower() in ("1","true","yes")
+
+# ---- аудио-порции (уменьшаем для латентности) ----
+AUDIO_CHUNK_MS = int(ENV.get("AUDIO_CHUNK_MS", "50"))  # ~50 ms по умолчанию
+BYTES_PER_MS   = int(SAMPLE_RATE * 1 * 2 / 1000)       # mono, s16
+
+# ---- WebSocket компрессия ----
+WS_DISABLE_COMPRESSION = ENV.get("WS_DISABLE_COMPRESSION", "1").lower() in ("1","true","yes")
+
+# ---- логи ----
+LOG_DIR = os.path.expanduser("call_logs"); os.makedirs(LOG_DIR, exist_ok=True)
+LOG_PATH = os.path.join(LOG_DIR, f"call_{dt.datetime.now():%Y%m%d_%H%M%S}.log")
+def ts(): return dt.datetime.now().strftime("%H:%M:%S")
+
+# ------------- цвета / вывод -------------
+def _supports_color():
+    return sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
+USE_COLOR = _supports_color()
+RESET = "\033[0m" if USE_COLOR else ""
+DIM   = "\033[2m" if USE_COLOR else ""
+RED   = "\033[31m" if USE_COLOR else ""
+GRN   = "\033[32m" if USE_COLOR else ""
+BLU   = "\033[34m" if USE_COLOR else ""
+CYAN  = "\033[36m" if USE_COLOR else ""
+YEL   = "\033[33m" if USE_COLOR else ""
+ITAL  = "\033[3m"  if USE_COLOR else ""
+ANSI_RE = _re.compile(r"\x1b\[[0-9;]*m")
+
+def strip_ansi(s: str) -> str: return ANSI_RE.sub("", s)
+_print_lock = asyncio.Lock()
+
+# глобальный счётчик «сноски» для реплик
+MSG_ID = 0
+def next_msg_id() -> int:
+    global MSG_ID; MSG_ID += 1; return MSG_ID
+
+async def print_and_log(line: str):
+    async with _print_lock:
+        print(line, flush=True)
+        with open(LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(strip_ansi(line) + "\n")
+
+async def info_line(s: str):
+    if DEBUG:
+        await print_and_log(f"{DIM}{s}{RESET}" if USE_COLOR else s)
+
+async def head_line(s: str):
+    await print_and_log(f"{CYAN}{s}{RESET}" if USE_COLOR else s)
+
+# ------------------- Live UI -------------------
+HAVE_RICH = True
 try:
-    from huggingface_hub import snapshot_download
-    _HF_AVAILABLE = True
+    from rich.console import Console
+    from rich.live import Live
+    from rich.table import Table
+    from rich.panel import Panel
+    from rich.text import Text
 except Exception:
-    _HF_AVAILABLE = False
+    HAVE_RICH = False
 
-_SPEECHBRAIN_OK = False
-try:
-    import torch
-    # v1.0 moved to speechbrain.inference
-    try:
-        from speechbrain.inference import EncoderClassifier
-    except Exception:
-        from speechbrain.pretrained import EncoderClassifier  # fallback; may print a deprecation warning
-    _TORCH_OK = True
-except Exception:
-    _TORCH_OK = False
+class LiveManager:
+    """Две «живые» строки (S1/S2) в футере. История печатается отдельно."""
+    def __init__(self, use_rich: bool):
+        self.use_rich = HAVE_RICH and use_rich and sys.stdout.isatty()
+        self.console = Console(highlight=False, soft_wrap=False) if HAVE_RICH else None
+        self.live = None
+        self.active = False
+        self._footer_state = {"S1":"", "S2":""}
+        self._footer_buffer = {"S1":"", "S2":""}
+        self._footer_last_seen_ms = {"S1":0.0, "S2":0.0}
+        self._footer_last_render_ms = {"S1":0.0, "S2":0.0}
+        self._flusher_task = None
 
+    def _render_footer(self):
+        # Если пауза — показываем это явно
+        if APP_PAUSED:
+            if HAVE_RICH:
+                return Panel(Text("PAUSED (Muted)", style="bold yellow", justify="center"), title="Status", border_style="yellow")
+            return f"\n[!!! PAUSED - Muted !!!]\n"
 
-# =========================
-# UTILS
-# =========================
-def now_iso() -> str:
-    return time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()) + f".{int((time.time()%1)*1000):03d}Z"
+        s1 = self._footer_state["S1"] or "…"
+        s2 = self._footer_state["S2"] or "…"
+        if HAVE_RICH:
+            table = Table.grid(padding=(0,1))
+            table.add_row(Text("LIVE S1:", style="bold red"),   Text(s1))
+            table.add_row(Text("LIVE S2:", style="bold green"), Text(s2))
+            return Panel(table, title="Live", border_style="cyan")
+        return f"[LIVE]\nS1: {s1}\nS2: {s2}\n"
 
-def pcm16_to_f32(buf: bytes) -> np.ndarray:
-    x = np.frombuffer(buf, dtype=np.int16)
-    return (x.astype(np.float32) / 32768.0)
+    async def start(self):
+        self.active = True
+        if self.use_rich:
+            self.live = Live(self._render_footer(), console=self.console, refresh_per_second=6, transient=False)
+            self.live.start()
+        self._flusher_task = asyncio.create_task(self._silence_flusher())
 
-def rms_dbfs(buf: bytes) -> float:
-    if not buf: return -120.0
-    x = np.frombuffer(buf, dtype=np.int16).astype(np.float32)
-    if x.size == 0: return -120.0
-    rms = np.sqrt(np.mean(np.square(x))) / 32768.0 + 1e-12
-    return 20.0 * np.log10(rms)
+    async def stop(self):
+        self.active = False
+        if self._flusher_task:
+            self._flusher_task.cancel()
+            with contextlib.suppress(Exception): await self._flusher_task
+        if self.use_rich and self.live:
+            self.live.stop()
+            self.live = None
 
-def resample(audio_f32: np.ndarray, src_sr: int, dst_sr: int) -> np.ndarray:
-    if src_sr == dst_sr: return audio_f32.astype(np.float32, copy=False)
-    frac = Fraction(dst_sr, src_sr).limit_denominator(1000)
-    return signal.resample_poly(audio_f32, frac.numerator, frac.denominator).astype(np.float32, copy=False)
-
-_SHORT_ALLOW = {"yes", "yeah", "yep", "no", "nope", "thanks", "thank you", "please", "okay", "ok", "alright"}
-def looks_like_junk(text: str) -> bool:
-    if not text: return True
-    t = text.strip().lower()
-    # drop 1–2 token generic noise unless allowlisted
-    if len(t.split()) <= 2 and t not in _SHORT_ALLOW:
-        # if it's clearly address/postcode/digits, keep
-        if re.search(r"\b\d+[a-z]?\b", t) or re.search(r"\b[a-z]{1,2}\d[a-z0-9]?\s*\d[a-z]{2}\b", t, re.I):
-            return False
-        return True
-    return False
-
-def normalize_postcode(text: str) -> str:
-    # Normalize UK postcode like FY4 3HX
-    m = re.search(r"\b([A-Z]{1,2}\d[A-Z0-9]?\s*\d[A-Z]{2})\b", text.upper())
-    return (text if not m else text.replace(m.group(0), re.sub(r"\s+", " ", m.group(1))))
-
-
-# =========================
-# DIARISATION
-# =========================
-class DiariserBase:
-    def assign(self, audio_16k: np.ndarray, seg_ts: float) -> str:
-        return "S1"
-
-class TurnTakingDiariser(DiariserBase):
-    def __init__(self):
-        self.next_spk = "S1"
-    def assign(self, audio_16k: np.ndarray, seg_ts: float) -> str:
-        s = self.next_spk
-        self.next_spk = "S2" if self.next_spk == "S1" else "S1"
-        return s
-
-class ECAPADiariser(DiariserBase):
-    """Two-centroid online diariser with hysteresis + cooldown."""
-    def __init__(self, classifier: "EncoderClassifier"):
-        self.classifier = classifier
-        self.p1: Optional[np.ndarray] = None
-        self.p2: Optional[np.ndarray] = None
-        self.last_spk: Optional[str] = None
-        self.last_ts: float = 0.0
-
-    @staticmethod
-    def _cos(a: np.ndarray, b: np.ndarray) -> float:
-        return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-9))
-
-    def _embed(self, audio_16k: np.ndarray) -> np.ndarray:
-        # limit to ~3s middle to reduce noise; always CPU to avoid GPU contention
-        sr = 16000
-        T = len(audio_16k)
-        target = 3 * sr
-        if T > target:
-            start = (T - target) // 2
-            audio_16k = audio_16k[start:start+target]
-        with torch.no_grad():
-            wav = torch.from_numpy(audio_16k).float().unsqueeze(0)
-            emb = self.classifier.encode_batch(wav).squeeze(0).squeeze(0).cpu().numpy()
-            emb = emb / (np.linalg.norm(emb) + 1e-9)
-        return emb
-
-    def assign(self, audio_16k: np.ndarray, seg_ts: float) -> Tuple[str, Dict[str, float]]:
-        emb = self._embed(audio_16k)
-        # Cooldown: keep previous to avoid rapid flips
-        if self.last_spk and (seg_ts - self.last_ts) < REASSIGN_COOLDOWN_S:
-            spk = self.last_spk
-            self._adapt(spk, emb)
-            self.last_ts = seg_ts
-            return spk, {"cooldown": 1.0}
-
-        if self.p1 is None:
-            self.p1 = emb; self.last_spk = "S1"; self.last_ts = seg_ts
-            return "S1", {"bootstrap": 1.0}
-
-        if self.p2 is None:
-            sim1 = self._cos(emb, self.p1)
-            if sim1 >= SIM_THRESHOLD_NEW:
-                self._adapt("S1", emb)
-                self.last_spk = "S1"; self.last_ts = seg_ts
-                return "S1", {"sim1": sim1}
+    async def _update_footer_now(self):
+        if not self.active:
+            return
+        if self.use_rich and self.live:
+            self.live.update(self._render_footer())
+        else:
+            if APP_PAUSED:
+                print(f"{YEL}[PAUSED]{RESET}", flush=True)
             else:
-                self.p2 = emb; self.last_spk = "S2"; self.last_ts = seg_ts
-                return "S2", {"new_spk": 1.0}
+                print(f"{DIM}[LIVE] S1: {self._footer_state['S1'] or '…'} | S2: {self._footer_state['S2'] or '…'}{RESET}", flush=True)
 
-        sim1 = self._cos(emb, self.p1)
-        sim2 = self._cos(emb, self.p2)
-        if abs(sim1 - sim2) <= SIM_DELTA_STABLE and self.last_spk is not None:
-            spk = self.last_spk
-        else:
-            spk = "S1" if sim1 >= sim2 else "S2"
-
-        self._adapt(spk, emb)
-        self.last_spk = spk; self.last_ts = seg_ts
-        return spk, {"sim1": sim1, "sim2": sim2}
-
-    def _adapt(self, spk: str, emb: np.ndarray):
-        if spk == "S1":
-            self.p1 = (1 - PROTOTYPE_MOMENTUM) * self.p1 + PROTOTYPE_MOMENTUM * emb
-            self.p1 /= (np.linalg.norm(self.p1) + 1e-9)
-        else:
-            self.p2 = (1 - PROTOTYPE_MOMENTUM) * self.p2 + PROTOTYPE_MOMENTUM * emb
-            self.p2 /= (np.linalg.norm(self.p2) + 1e-9)
-
-
-# =========================
-# TRANSLATION (async & optional)
-# =========================
-class AsyncTranslator:
-    def __init__(self):
-        self.enabled = TRANSLATE_ENABLED_DEFAULT and _TRANSFORMERS_AVAILABLE
-        self._enru = None
-        self._ruen = None
-        self.pool = None
-        if self.enabled:
-            try:
-                self._enru = pipeline(
-                    "translation",
-                    model=AutoModelForSeq2SeqLM.from_pretrained("Helsinki-NLP/opus-mt-en-ru", local_files_only=True),
-                    tokenizer=AutoTokenizer.from_pretrained("Helsinki-NLP/opus-mt-en-ru", local_files_only=True),
-                    device=-1,
-                )
-                self._ruen = pipeline(
-                    "translation",
-                    model=AutoModelForSeq2SeqLM.from_pretrained("Helsinki-NLP/opus-mt-ru-en", local_files_only=True),
-                    tokenizer=AutoTokenizer.from_pretrained("Helsinki-NLP/opus-mt-ru-en", local_files_only=True),
-                    device=-1,
-                )
-                from concurrent.futures import ThreadPoolExecutor
-                self.pool = ThreadPoolExecutor(max_workers=2)
-                global _TRANSLATORS_OK
-                _TRANSLATORS_OK = True
-            except Exception:
-                self.enabled = False
-
-    def translate_now(self, speaker: str, text: str, src_hint: str):
-        if not (self.enabled and _TRANSLATORS_OK and self.pool and text):
-            return None
-        def _task():
-            try:
-                if src_hint.startswith("en") or all(ord(c) < 128 for c in text):
-                    t = self._enru(text, truncation=True, max_length=256)[0]["translation_text"]
-                    return ("ru", t)
-                else:
-                    t = self._ruen(text, truncation=True, max_length=256)[0]["translation_text"]
-                    return ("en", t)
-            except Exception:
-                return None
-        from concurrent.futures import wait, FIRST_COMPLETED
-        fut = self.pool.submit(_task)
-        done, _ = wait([fut], timeout=TRANSLATE_TIMEOUT_S, return_when=FIRST_COMPLETED)
-        if fut in done:
-            return fut.result()
+    async def _silence_flusher(self):
         try:
-            fut.cancel()
-        except Exception:
+            while True:
+                await asyncio.sleep(0.1)
+                now_ms = time.monotonic() * 1000.0
+                
+                # Если пауза, просто обновляем UI раз в секунду чтобы не моргало
+                if APP_PAUSED:
+                    if (now_ms - self._footer_last_render_ms.get("PAUSE", 0)) > 1000:
+                         self._footer_last_render_ms["PAUSE"] = now_ms
+                         await self._update_footer_now()
+                    continue
+
+                for label in ("S1","S2"):
+                    buf = self._footer_buffer[label]
+                    seen = self._footer_last_seen_ms[label]
+                    rend = self._footer_last_render_ms[label]
+                    if not buf:
+                        continue
+                    if buf != self._footer_state[label] and (now_ms - seen) >= SILENCE_FLUSH_MS and (now_ms - rend) >= 50:
+                        self._footer_state[label] = buf
+                        self._footer_last_render_ms[label] = now_ms
+                        await self._update_footer_now()
+        except asyncio.CancelledError:
             pass
+
+    async def show_live_text(self, label: str, text: str):
+        if APP_PAUSED: return
+        now_ms = time.monotonic() * 1000.0
+        last_drawn = self._footer_state[label]
+        grew = (len(text) - len(last_drawn)) >= MIN_DELTA_CHARS
+        punct = bool(_re.search(r"[.!?…]$", text))
+        debounce_ok = (now_ms - self._footer_last_render_ms[label]) >= PARTIAL_DEBOUNCE_MS
+
+        self._footer_buffer[label] = text
+        self._footer_last_seen_ms[label] = now_ms
+
+        if (grew and debounce_ok) or punct:
+            self._footer_state[label] = text
+            self._footer_last_render_ms[label] = now_ms
+            await self._update_footer_now()
+
+    async def clear_live_line(self, label: str):
+        self._footer_state[label] = ""
+        self._footer_buffer[label] = ""
+        self._footer_last_render_ms[label] = time.monotonic() * 1000.0
+        await self._update_footer_now()
+
+    async def print_final_with_extras(self, label: str, text: str, tr_text: str | None = None) -> int:
+        msg_id = next_msg_id()
+        t0 = ts()
+        label_col = RED if label == "S1" else GRN
+        await print_and_log(f"{t0} | [#{msg_id}] {label_col}{label}{RESET}: {text}")
+        if ENABLE_TRANSLATION:
+            if tr_text and tr_text.strip():
+                await print_and_log(f"{DIM}{t0} | [#{msg_id}] {label} → RU: {tr_text.strip()}{RESET}")
+            else:
+                await print_and_log(f"{DIM}{t0} | [#{msg_id}] {label} → RU: —{RESET}")
+        return msg_id
+
+# ------------------- менеджер перевода -------------------
+class TranslationManager:
+    def __init__(self, live: LiveManager):
+        self.live = live
+        self._parts = {"S1": [], "S2": []}
+        self._pending = {"S1": None, "S2": None}
+        self._watch_task = None
+
+    def _joined(self, label: str) -> str:
+        txt = " ".join(p.strip() for p in self._parts[label] if p and p.strip())
+        return _re.sub(r"\s+", " ", txt).strip()
+
+    async def start(self):
+        if ENABLE_TRANSLATION:
+            self._watch_task = asyncio.create_task(self._watchdog())
+
+    async def stop(self):
+        if self._watch_task:
+            self._watch_task.cancel()
+            with contextlib.suppress(Exception): await self._watch_task
+
+    async def on_translation_chunk(self, label: str, text: str):
+        if not ENABLE_TRANSLATION or not text or APP_PAUSED:
+            return
+        self._parts[label].append(text)
+        pend = self._pending[label]
+        now_ms = time.monotonic() * 1000.0
+        if pend and not pend["printed"] and now_ms <= pend["deadline_ms"]:
+            tr = self._joined(label)
+            if tr:
+                await print_and_log(f"{ts()} | {label} → RU: {tr}")
+                pend["printed"] = True
+                self._parts[label].clear()
+
+    async def on_utterance_finalized(self, label: str) -> str | None:
+        if not ENABLE_TRANSLATION:
+            return None
+        now_ms = time.monotonic() * 1000.0
+        tr_now = self._joined(label)
+        if tr_now:
+            self._parts[label].clear()
+            self._pending[label] = None
+            return tr_now
+        self._pending[label] = {"deadline_ms": now_ms + TRANSLATION_WINDOW_MS, "printed": False}
         return None
 
+    async def on_new_utterance_started(self, label: str):
+        now_ms = time.monotonic() * 1000.0
+        self._pending[label] = {"deadline_ms": now_ms + TRANSLATION_WINDOW_MS, "printed": False}
+        self._parts[label].clear()
 
-# =========================
-# APP
-# =========================
-class RealtimeASRApp:
-    def __init__(self):
-        # Check whisper files
-        need = ["model.bin","tokenizer.json","vocabulary.json","config.json","preprocessor_config.json"]
-        miss = [f for f in need if not os.path.isfile(os.path.join(ASR_MODEL_DIR, f))]
-        if miss:
-            raise RuntimeError(f"Missing in {ASR_MODEL_DIR}: {', '.join(miss)}")
-
-        t0 = time.time()
-        self.whisper = WhisperModel(ASR_MODEL_DIR, device=DEVICE, compute_type=COMPUTE_TYPE)
-        print(f"[INIT] Whisper loaded in {time.time()-t0:.2f}s (device={DEVICE}, compute={COMPUTE_TYPE})", flush=True)
-
-        # Diariser: prefer ECAPA if local
-        self.diariser: DiariserBase
-        if USE_ECAPA_IF_AVAILABLE and _HF_AVAILABLE and _TORCH_OK:
-            try:
-                snapshot_download("speechbrain/spkrec-ecapa-voxceleb", local_files_only=True)
-                self.diariser = ECAPADiariser(EncoderClassifier.from_hparams(
-                    source="speechbrain/spkrec-ecapa-voxceleb",
-                    run_opts={"device": "cpu"},
-                    savedir=os.path.join(os.environ["HUGGINGFACE_HUB_CACHE"], "speechbrain_spkrec_ecapa_voxceleb_local")
-                ))
-                global _SPEECHBRAIN_OK
-                _SPEECHBRAIN_OK = True
-                print("[INIT] ECAPA diariser ready (local).", flush=True)
-            except Exception as e:
-                print(f"[WARN] ECAPA diariser not available locally ({e}). Falling back to turn-taking.", flush=True)
-                self.diariser = TurnTakingDiariser()
-        else:
-            self.diariser = TurnTakingDiariser()
-
-        # Translator
-        self.translator = AsyncTranslator()
-        if self.translator.enabled:
-            print("[INIT] Translators ready (local).", flush=True)
-        else:
-            print("[INIT] Translators disabled or not local; ASR will not wait for them.", flush=True)
-
-        # Audio & VAD
-        self.in_sr = int(INPUT_SR)
-        self.asr_sr = int(ASR_SR)
-        self.frame_ms = int(FRAME_MS)
-        self.frame_bytes = int(self.in_sr * (self.frame_ms / 1000.0)) * 2
-        self.vad = webrtcvad.Vad(int(VAD_AGGR))
-        self.silence_tail_frames = int(SILENCE_TAIL_MS / self.frame_ms)
-        self.min_segment_frames = int(MIN_SEGMENT_MS / self.frame_ms)
-        self.max_segment_frames = int((MAX_SEGMENT_S * 1000.0) / self.frame_ms)
-        self.min_active_frames = int(MIN_ACTIVE_FRAMES)
-        self.audio_q: "queue.Queue[bytes]" = queue.Queue(maxsize=256)
-
-        # State
-        self.energy_threshold_db = -40.0
-        self.last_overflow_log_ts = 0.0
-        self.running = False
-
-        # Pending list (for diariser stabilisation BEFORE printing)
-        self.pending: Deque[Dict[str, Any]] = deque()  # each: {ts, audio16, text, spk?, printed}
-        # Merge buffer (after we decide the speaker)
-        self.buf_spk: Optional[str] = None
-        self.buf_text: str = ""
-        self.buf_start_ts: float = 0.0
-        self.last_flush_ts: float = 0.0
-
-        # Role mapping (for your reference)
-        self.me_spk: Optional[str] = None
-
-        self.log_path = LOG_PATH
-
-        # Console thread
-        self.ctrl = threading.Thread(target=self.console_loop, daemon=True)
-        self.ctrl.start()
-
-    # ---------- console ----------
-    def console_loop(self):
-        print("[ROLE] Type ':me s1' or ':me s2'. ':swap' to swap. ':translate on|off' to toggle translation.", flush=True)
-        while True:
-            try:
-                line = sys.stdin.readline()
-                if not line:
-                    time.sleep(0.05); continue
-                line = line.strip()
-                if not line: continue
-                l = line.lower()
-                if l.startswith(":me "):
-                    arg = l[4:].strip()
-                    if arg in ("s1","1"): self.me_spk = "S1"; print("[CTRL] ME = S1", flush=True)
-                    elif arg in ("s2","2"): self.me_spk = "S2"; print("[CTRL] ME = S2", flush=True)
-                    else: print("[CTRL] Usage: :me s1 | :me s2", flush=True)
-                elif l == ":swap":
-                    if self.me_spk in ("S1","S2"):
-                        self.me_spk = "S2" if self.me_spk == "S1" else "S1"
-                        print(f"[CTRL] Swapped. ME = {self.me_spk}", flush=True)
-                    else:
-                        print("[CTRL] ME not set.", flush=True)
-                elif l.startswith(":translate "):
-                    arg = l.split(None, 1)[1].strip()
-                    if arg in ("on","true","1"):
-                        self.translator.enabled = True
-                        print("[CTRL] Translation: ON", flush=True)
-                    elif arg in ("off","false","0"):
-                        self.translator.enabled = False
-                        print("[CTRL] Translation: OFF", flush=True)
-                    else:
-                        print("[CTRL] Use :translate on|off", flush=True)
-                else:
-                    print("[CTRL] Unknown command.", flush=True)
-            except Exception:
-                time.sleep(0.1)
-
-    # ---------- audio ----------
-    def audio_cb(self, indata, frames, time_info, status):
-        if status:
-            now = time.time()
-            if "input_overflow" in str(status) and (now - self.last_overflow_log_ts) > 2.0:
-                print("[AUDIO] input_overflow", flush=True)
-                self.last_overflow_log_ts = now
+    async def _watchdog(self):
         try:
-            self.audio_q.put_nowait(bytes(indata))
-        except queue.Full:
-            _ = self.audio_q.get_nowait()
-            self.audio_q.put_nowait(bytes(indata))
-
-    # ---------- calibration ----------
-    def calibrate_noise(self):
-        frames_need = max(12, int(round((CALIBRATE_SECS * 1000.0) / self.frame_ms)))
-        print(f"[INFO] Calibrating noise ~{CALIBRATE_SECS:.1f}s ({frames_need} frames)...", flush=True)
-        vals = []
-        deadline = time.time() + max(2.5, CALIBRATE_SECS * 3)
-        while len(vals) < frames_need and time.time() < deadline:
-            try:
-                fr = self.audio_q.get(timeout=0.4)
-            except queue.Empty:
-                continue
-            if len(fr) != self.frame_bytes: continue
-            vals.append(rms_dbfs(fr))
-        if vals:
-            med = float(np.median(vals))
-            thr = max(min(med + ENERGY_MARGIN_DB, ENERGY_DB_MAX), ENERGY_DB_MIN)
-            self.energy_threshold_db = thr
-            print(f"[INFO] Noise calibration: median={med:.1f} dBFS -> threshold={self.energy_threshold_db:.1f} dBFS", flush=True)
-        else:
-            print(f"[WARN] Calibration failed; using default {self.energy_threshold_db:.1f} dBFS", flush=True)
-
-    # ---------- ASR ----------
-    def asr_decode(self, audio_16k: np.ndarray) -> str:
-        segs, info = self.whisper.transcribe(
-            audio_16k,
-            task="transcribe",
-            language="en",
-            beam_size=max(1, int(WHISPER_BEAM_SIZE)),
-            temperature=WHISPER_TEMP,
-            without_timestamps=bool(WHISPER_WITHOUT_TS),
-            vad_filter=bool(WHISPER_INTERNAL_VAD),
-            condition_on_previous_text=bool(WHISPER_CONDITION_PREV),
-            no_speech_threshold=WHISPER_NO_SPEECH_TH,
-            compression_ratio_threshold=WHISPER_COMP_RATIO_TH,
-            log_prob_threshold=WHISPER_LOGPROB_TH,
-            patience=1.0,
-            initial_prompt=None,
-        )
-        text = "".join((s.text or "") for s in segs).strip()
-        text = normalize_postcode(text)
-        return text
-
-    # ---------- pending / flush ----------
-    def _print_and_log(self, spk: str, text: str):
-        ts = now_iso()
-        print(f"[{ts}] (FINAL) {spk} [en]: {text}", flush=True)
-        try:
-            with open(self.log_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps({"ts": ts, "speaker": spk, "lang": "en", "text": text}, ensure_ascii=False) + "\n")
-        except Exception:
+            while True:
+                await asyncio.sleep(0.1)
+                if APP_PAUSED: continue
+                now_ms = time.monotonic() * 1000.0
+                for label in ("S1","S2"):
+                    pend = self._pending[label]
+                    if not pend:
+                        continue
+                    if pend["printed"] or now_ms > pend["deadline_ms"]:
+                        self._pending[label] = None
+                        self._parts[label].clear()
+        except asyncio.CancelledError:
             pass
-        if self.translator.enabled:
-            res = self.translator.translate_now(spk, text, "en")
-            if res:
-                tgt, tr = res
-                print(f"   └─ {tr}", flush=True)
-                try:
-                    with open(self.log_path, "a", encoding="utf-8") as f:
-                        f.write(json.dumps({"ts": now_iso(), "type": "translation", "speaker": spk,
-                                            "src_lang": "en", "tgt_lang": tgt, "text": text,
-                                            "translation": tr}, ensure_ascii=False) + "\n")
-                except Exception:
-                    pass
 
-    def _flush_merge_buf(self):
-        if not self.buf_text:
+# ------------------- Менеджер подсказок (локальные модели через reply_engine) -------------------
+from reply_engine import ReplyEngine  # модуль из файла reply_engine.py
+
+class SuggestionManager:
+    """FAST на партиалах S2 (llama1B), FINAL на финалах S2 (та же модель)."""
+    def __init__(self, goal_en: str, context_en: str):
+        self.enabled = ENABLE_SUGGEST
+        self.engine = ReplyEngine(goal=goal_en, context=context_en)
+        self.queue = asyncio.Queue()
+        self.worker_task: asyncio.Task | None = None
+        self._last_fast_text = ""
+        self._last_fast_ts_ms = 0.0
+        self._fast_dedupe_window_ms = 8000.0
+
+    def add_history(self, label: str, text: str):
+        self.engine.add_history(label, text)
+
+    async def start(self):
+        if not self.enabled:
+            await head_line("[SUGGEST] Подсказки отключены (ENABLE_SUGGEST=0).")
             return
-        text = self.buf_text.strip()
-        spk = self.buf_spk or "S1"
-        self.buf_text = ""
-        self.buf_spk = None
-        self.buf_start_ts = 0.0
-        self.last_flush_ts = time.time()
-        if text:
-            self._print_and_log(spk, text)
+        self.worker_task = asyncio.create_task(self._worker())
+        await head_line("[SUGGEST] ReplyEngine инициализирован.")
 
-    def _merge_or_emit(self, spk: str, text: str):
-        now = time.time()
-        if self.buf_text and self.buf_spk and self.buf_spk != spk:
-            self._flush_merge_buf()
+    async def stop(self):
+        if self.worker_task:
+            self.worker_task.cancel()
+            with contextlib.suppress(Exception):
+                await self.worker_task
 
-        if not self.buf_text:
-            self.buf_spk = spk
-            self.buf_text = text
-            self.buf_start_ts = now
-            if not self._text_incomplete(text):
-                self._flush_merge_buf()
+    async def schedule_fast_partial(self, s2_partial_text: str):
+        if not self.enabled or APP_PAUSED:
             return
+        await self.queue.put({"kind": "fast", "partial": s2_partial_text})
 
-        if self.buf_spk == spk:
-            # same speaker: try to merge if within window
-            if (now - self.buf_start_ts) <= MERGE_WINDOW_S_MAX and (now - self.last_flush_ts) <= MERGE_GAP_S_MAX:
-                merged = (self.buf_text + " " + text).strip()
-                self.buf_text = merged
-                if not self._text_incomplete(merged) or (now - self.buf_start_ts) > MERGE_WINDOW_S_MAX:
-                    self._flush_merge_buf()
-                return
-            # otherwise flush and start new
-            self._flush_merge_buf()
-            self.buf_spk = spk
-            self.buf_text = text
-            self.buf_start_ts = now
-            if not self._text_incomplete(text):
-                self._flush_merge_buf()
+    async def schedule_for_s2(self, anchor_id: int):
+        if not self.enabled or APP_PAUSED:
             return
+        await self.queue.put({"kind": "final", "anchor": anchor_id})
 
-        # fallback
-        self._flush_merge_buf()
-        self.buf_spk = spk
-        self.buf_text = text
-        self.buf_start_ts = now
-        if not self._text_incomplete(text):
-            self._flush_merge_buf()
+    async def _worker(self):
+        while True:
+            job = await self.queue.get()
+            try:
+                if APP_PAUSED:
+                    continue
+                
+                if job.get("kind") == "fast":
+                    text = job.get("partial") or ""
+                    reply = await self.engine.fast_reply_from_partial(text)
+                    if reply:
+                        now_ms = time.monotonic() * 1000.0
+                        if (reply == self._last_fast_text) and ((now_ms - self._last_fast_ts_ms) < self._fast_dedupe_window_ms):
+                            pass
+                        else:
+                            await print_and_log(f"{BLU}{ts()} |    ↳ FAST: {reply}{RESET}")
+                            self._last_fast_text = reply
+                            self._last_fast_ts_ms = now_ms
+                elif job.get("kind") == "final":
+                    anchor = job.get("anchor")
+                    reply = await self.engine.final_reply()
+                    if reply:
+                        await print_and_log(f"{BLU}{ts()} |    ↳ SUGGEST[#{anchor}]: {reply}{RESET}")
+            except Exception as e:
+                await info_line(f"[SUGGEST] worker error: {e}")
+            finally:
+                self.queue.task_done()
 
-    @staticmethod
-    def _text_incomplete(text: str) -> bool:
-        if not text: return True
-        if len(text.split()) <= MERGE_WORDS_MAX and not re.search(r"[.!?…]\s*$", text):
+# ------------------- PipeWire helpers -------------------
+def run_cmd(cmd):
+    try:
+        return subprocess.check_output(cmd, stderr=subprocess.STDOUT).decode("utf-8","ignore")
+    except subprocess.CalledProcessError as e:
+        return e.output.decode("utf-8","ignore")
+    except Exception:
+        return ""
+
+_PREFIX_RE = _re.compile(r'\b((?:bluez|alsa)_(?:input|output|source)\.[A-Za-z0-9_.:-]+)\b')
+
+def list_node_names_wpctl():
+    out = run_cmd(["wpctl","status","--name"])
+    return set(_PREFIX_RE.findall(out))
+
+def list_node_names_pwdump():
+    out = run_cmd(["pw-dump"])
+    names = set()
+    for m in _re.finditer(r'"node\.name"\s*:\s*"([^"]+)"', out):
+        n = m.group(1)
+        if n.startswith(("bluez_input.","bluez_source.","bluez_output.","alsa_input.","alsa_output.")):
+            names.add(n)
+    return names
+
+def list_node_names():
+    names = set()
+    names |= list_node_names_wpctl()
+    if not names:
+        names |= list_node_names_pwdump()
+    return sorted(names)
+
+def node_exists(name: str) -> bool:
+    return name in list_node_names()
+
+def list_bluez_nodes():
+    return [n for n in list_node_names() if n.startswith(("bluez_output.","bluez_input.","bluez_source."))]
+
+def is_sink_node(name: str) -> bool:
+    return name.startswith(("alsa_output.","bluez_output."))
+
+def is_source_node(name: str) -> bool:
+    return name.startswith(("alsa_input.","bluez_input.","bluez_source."))
+
+def list_bluez_inputs():
+    return [n for n in list_node_names() if n.startswith(("bluez_input.","bluez_source."))]
+
+def list_bluez_sinks():
+    return [n for n in list_node_names() if n.startswith("bluez_output.")]
+
+def get_default_sink_name():
+    out = run_cmd(["wpctl", "inspect", "@DEFAULT_AUDIO_SINK@"])
+    m = _re.search(r'node\.name\s*=\s*"([^"]+)"', out)
+    return m.group(1) if m else ""
+
+def find_mic_source_prefer_usb():
+    for n in list_node_names():
+        if n.startswith("alsa_input.") and any(k in n for k in ("HyperX","DuoCast","usb-","Trust_PC_Headset","Generalplus")):
+            return n
+    for n in list_node_names():
+        if n.startswith("alsa_input."): return n
+    return ""
+
+async def wait_for_exact_node(target_name: str, timeout_sec: float) -> bool:
+    t0 = time.monotonic()
+    while (time.monotonic() - t0) < timeout_sec:
+        if node_exists(target_name):
             return True
+        await asyncio.sleep(S2_APPEAR_POLL_MS/1000.0)
+    return node_exists(target_name)
+
+async def wait_for_any_bluez_input(timeout_sec: float) -> list[str]:
+    t0 = time.monotonic()
+    while (time.monotonic() - t0) < timeout_sec:
+        ins = list_bluez_inputs()
+        if ins:
+            return ins
+        await asyncio.sleep(S2_APPEAR_POLL_MS/1000.0)
+    return list_bluez_inputs()
+
+def build_s2_candidates(primary_mode: str) -> list[str]:
+    names = list_node_names()
+    bt_inputs = [n for n in names if n.startswith(("bluez_input.","bluez_source."))]
+    bt_sinks  = [n for n in names if n.startswith("bluez_output.")]
+    alsa_snks = [n for n in names if n.startswith("alsa_output.")]
+    def_snk   = get_default_sink_name()
+
+    if primary_mode and primary_mode not in ("AUTO_BT_SINK","AUTO_BT_AUTO","AUTO_DEFAULT_SINK","AUTO_ALSA_SINK"):
+        return [primary_mode] if primary_mode in names else []
+
+    cands: list[str] = []
+    cands.extend(bt_inputs)   # 1) HFP/HSP sources
+    cands.extend(bt_sinks)    # 2) A2DP sinks (monitor)
+    if ALLOW_S2_ALSA_FALLBACK and (not REQUIRE_BT_FOR_S2 or not (bt_inputs or bt_sinks)):
+        if def_snk:
+            cands.append(def_snk)
+        for n in alsa_snks:
+            if n != def_snk:
+                cands.append(n)
+
+    seen = set(); uniq = []
+    for n in cands:
+        if n not in seen:
+            uniq.append(n); seen.add(n)
+    return uniq
+
+# --- Инициализация устройств S1/S2 ---
+S1_DEVICE = ENV.get("S1_DEVICE") or find_mic_source_prefer_usb()
+S2_TARGET = ENV.get("S2_TARGET") or "AUTO_BT_AUTO"
+
+# ------------------- Speechmatics helpers -------------------
+async def connect_ws(url, headers):
+    # отключаем компрессию по возможности
+    opts = {"max_size": None}
+    if WS_DISABLE_COMPRESSION:
+        opts["compression"] = None
+    try:
+        return await websockets.connect(url, additional_headers=headers, **opts)  # type: ignore
+    except TypeError:
+        try:
+            return await websockets.connect(url, extra_headers=headers, **opts)  # type: ignore
+        except TypeError:
+            return await websockets.connect(url, **opts)
+
+def _text_from_transcript_results(d: dict) -> str:
+    words = []
+    for r in d.get("results", []):
+        alts = r.get("alternatives", [])
+        if alts:
+            w = alts[0].get("content", "")
+            if w: words.append(w)
+    return " ".join(words).strip()
+
+def _extract_transcript(d: dict) -> str:
+    meta_t = (d.get("metadata") or {}).get("transcript") or ""
+    res_t  = _text_from_transcript_results(d)
+    return res_t if len(res_t) > len(meta_t) else meta_t
+
+def _extract_translation(d: dict) -> str:
+    if isinstance(d.get("translation"), str) and d["translation"].strip():
+        return d["translation"].strip()
+    meta = d.get("metadata") or {}
+    if isinstance(meta.get("translation"), str) and meta["translation"].strip():
+        return meta["translation"].strip()
+    words = []
+    for r in d.get("results", []):
+        c = r.get("content", "")
+        if c:
+            words.append(c)
+    return " ".join(words).strip()
+
+async def start_sm(label: str, want_translation: bool):
+    headers = [("Authorization", f"Bearer {API_KEY}")]
+    ws = await connect_ws(SM_ENDPOINT, headers)
+
+    transcription_config = {
+        "language": "en",
+        "output_locale": "en-GB",
+        "enable_partials": True,
+        "max_delay": MAX_DELAY,
+        "max_delay_mode": MAX_DELAY_MODE,
+        "operating_point": OPERATING_POINT,
+        "conversation_config": {"end_of_utterance_silence_trigger": EOU_SILENCE},
+        "audio_filtering_config": {"volume_threshold": 0},
+    }
+
+    payload = {
+        "message": "StartRecognition",
+        "audio_format": {"type": "raw", "encoding": ENCODING, "sample_rate": SAMPLE_RATE},
+        "transcription_config": transcription_config
+    }
+
+    if want_translation:
+        payload["translation_config"] = {
+            "target_languages": [TRANSLATE_TO],
+            "enable_partials": bool(TRANSLATION_PARTIALS)
+        }
+
+    await ws.send(json.dumps(payload))
+
+    recognition_started = asyncio.Event()
+    first_error = {"type": None, "reason": None}
+
+    async def reader():
+        try:
+            async for msg in ws:
+                if isinstance(msg, (bytes, bytearray)):
+                    continue
+                try:
+                    data = json.loads(msg)
+                except Exception:
+                    await info_line(f"[{label}] [raw] {msg[:200]}")
+                    continue
+
+                m = data.get("message")
+
+                if m == "RecognitionStarted":
+                    await info_line(f"[{label}] RecognitionStarted")
+                    recognition_started.set()
+
+                elif m in ("AddPartialTranscript", "AddTranscript"):
+                    txt = _extract_transcript(data)
+                    if not txt:
+                        continue
+                    if m == "AddPartialTranscript":
+                        await COALESCE.on_partial(label, txt)
+                    else:
+                        await COALESCE.on_final_chunk(label, txt)
+
+                elif m == "AddTranslation":
+                    tr = _extract_translation(data)
+                    if tr and TM:
+                        await TM.on_translation_chunk(label, tr)
+
+                elif m == "AddPartialTranslation":
+                    tr = _extract_translation(data)
+                    if tr and TM:
+                        await TM.on_translation_chunk(label, tr)
+
+                elif m == "Error":
+                    first_error["type"] = data.get("type")
+                    first_error["reason"] = data.get("reason")
+                    await info_line(f"[{label}] Error: {data}")
+
+                elif m == "AudioAdded":
+                    if DEBUG and PRINT_AUDIOADDED:
+                        await info_line(f"[{label}] {m}: {data}")
+
+                else:
+                    await info_line(f"[{label}] {m or 'UNK'}: {data}")
+
+        except websockets.ConnectionClosed as e:
+            await info_line(f"[{label}] WS closed: {e.code} {e.reason}")
+        except Exception as e:
+            await info_line(f"[{label}] reader exception: {e}")
+
+    async def send_audio_chunk(chunk: bytes):
+        # === PAUSE CHECK ===
+        # Если пауза, мы просто не шлем аудио данные.
+        # Сокет остается открытым, но API не получает аудио и не списывает кредиты/не процессит.
+        if APP_PAUSED:
+            return
+        await ws.send(chunk)
+
+    async def finish():
+        with contextlib.suppress(Exception):
+            await ws.send(json.dumps({"message": "EndOfStream", "last_seq_no": 0}))
+        with contextlib.suppress(Exception):
+            await ws.close()
+        await asyncio.sleep(0.3)
+
+    return ws, reader, send_audio_chunk, finish, recognition_started, first_error
+
+# ------------------- захват -------------------
+async def run_pw_record(cmd, on_chunk, label):
+    proc = await asyncio.create_subprocess_exec(
+        *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+    )
+    await info_line(f"[{label}] started: {' '.join(cmd)}")
+
+    last_t = time.monotonic()
+    _bytes_box = [0]
+    read_size = max(2, BYTES_PER_MS * max(10, AUDIO_CHUNK_MS))  # >=10ms защиты
+
+    async def pump_stderr():
+        while True:
+            line = await proc.stderr.readline()
+            if not line: break
+            s = line.decode("utf-8","ignore").rstrip()
+            if s: await info_line(f"[{label}][pw-record] {s}")
+
+    async def stats2():
+        nonlocal last_t
+        while True:
+            await asyncio.sleep(1.0)
+            now = time.monotonic()
+            dt_s = max(1e-6, now - last_t)
+            kbps = (_bytes_box[0] / 1024.0) / dt_s
+            if not APP_PAUSED: # Логируем только если не пауза, чтоб не спамить
+                await info_line(f"[{label}] tx ~{kbps:.1f} KB/s (last {dt_s:.2f}s, chunk { _bytes_box[0]//1024 } KB)")
+            _bytes_box[0] = 0
+            last_t = now
+
+    t_err = asyncio.create_task(pump_stderr())
+    t_stat = asyncio.create_task(stats2())
+
+    try:
+        while True:
+            chunk = await proc.stdout.read(read_size)
+            if not chunk: break
+            _bytes_box[0] += len(chunk)
+            await on_chunk(chunk)
+    finally:
+        with contextlib.suppress(ProcessLookupError): proc.terminate()
+        with contextlib.suppress(Exception): await t_err
+        with contextlib.suppress(Exception): t_stat.cancel()
+        await info_line(f"[{label}] stopped")
+
+# ------------------- S2 capture controller & routing guard -------------------
+class S2CaptureController:
+    def __init__(self, send_func, sample_rate: int):
+        self.send_func = send_func
+        self.sample_rate = sample_rate
+        self.current_node = None
+        self.task: asyncio.Task | None = None
+
+    async def start(self, node_name: str):
+        self.current_node = node_name
+        if is_sink_node(node_name):
+            await head_line(f"[S2_CAPTURE] start (monitor) → {node_name}")
+            cmd = [
+                "pw-record",
+                "--monitor",
+                "--target", node_name,
+                "--format", "s16", "--channels", "1", "--rate", str(self.sample_rate),
+                "-"
+            ]
+        else:
+            await head_line(f"[S2_CAPTURE] start (direct) → {node_name}")
+            cmd = [
+                "pw-record",
+                "--target", node_name,
+                "--format", "s16", "--channels", "1", "--rate", str(self.sample_rate),
+                "-"
+            ]
+        self.task = asyncio.create_task(run_pw_record(cmd, self.send_func, "S2_capture"))
+
+    async def stop(self):
+        if self.task:
+            self.task.cancel()
+            with contextlib.suppress(Exception):
+                await self.task
+            self.task = None
+        self.current_node = None
+
+    async def switch_to(self, node_name: str):
+        if node_name == self.current_node:
+            return
+        await head_line(f"[S2_CAPTURE] switch ({'monitor' if is_sink_node(node_name) else 'direct'}) → {node_name}")
+        await self.stop()
+        await self.start(node_name)
+
+class RoutingGuard:
+    def __init__(self, s2ctrl: S2CaptureController, candidates: list[str]):
+        self.s2ctrl = s2ctrl
+        self.candidates = candidates[:]
+        self.idx = 0
+        self.task: asyncio.Task | None = None
+        self.last = {"S1": {"txt":"", "t":0.0}, "S2": {"txt":"", "t":0.0}}
+        self._last_switch_t = 0.0
+        self.s1_cache: list[tuple[str,float]] = []  # (text, t)
+
+    async def start(self):
+        self.task = asyncio.create_task(self._monitor())
+
+    async def stop(self):
+        if self.task:
+            self.task.cancel()
+            with contextlib.suppress(Exception):
+                await self.task
+
+    async def note(self, label: str, txt: str):
+        now = time.monotonic()
+        self.last[label]["txt"] = txt or ""
+        self.last[label]["t"] = now
+        if label == "S1":
+            self.s1_cache.append((txt or "", now))
+            if len(self.s1_cache) > MAX_S1_CACHE:
+                self.s1_cache = self.s1_cache[-MAX_S1_CACHE:]
+
+    def _sim(self, a: str, b: str) -> float:
+        def _nw(s):
+            s = s.lower()
+            s = _re.sub(r"[^a-z0-9' ]+", " ", s)
+            return [w for w in s.split() if w]
+        A, B = set(_nw(a)), set(_nw(b))
+        if not A and not B: return 1.0
+        if not A or not B:  return 0.0
+        inter = len(A & B); union = max(1, len(A | B))
+        return inter / union
+
+    def is_echo_of_recent_s1(self, s2_txt: str) -> bool:
+        now = time.monotonic()
+        if len(s2_txt.strip()) <= 3:
+            return True
+        for (t1, t1_time) in list(reversed(self.s1_cache)):
+            if (now - t1_time) > ECHO_WINDOW_SEC:
+                break
+            if self._sim(s2_txt, t1) >= ECHO_SIM_THRESHOLD:
+                return True
         return False
 
-    # ---------- diariser stabilisation ----------
-    def _assign_speaker(self, audio_16k: np.ndarray, ts: float) -> str:
-        if _SPEECHBRAIN_OK and isinstance(self.diariser, ECAPADiariser):
-            spk, _ = self.diariser.assign(audio_16k, ts)
-            return spk
-        else:
-            return self.diariser.assign(audio_16k, ts)
-
-    def _reclassify_pending_if_ready(self):
-        """When both prototypes exist, reclassify the last few pending items to stabilise S1/S2."""
-        if not (_SPEECHBRAIN_OK and isinstance(self.diariser, ECAPADiariser)):
+    async def maybe_switch_due_to_echo(self):
+        now = time.monotonic()
+        if len(self.candidates) <= 1:
             return
-        d: ECAPADiariser = self.diariser
-        if d.p1 is None or d.p2 is None:
+        if (now - self._last_switch_t) < 5.0:
             return
-        # Reclassify recent items (except the very last to keep latency tiny)
-        n = len(self.pending)
-        if n <= 1:
-            return
-        # Reclassify all but the newest
-        for i in range(max(0, n - PENDING_MAX_ITEMS), n - 1):
-            item = self.pending[i]
-            if item.get("printed"):
-                continue
-            emb_spk, _ = d.assign(item["audio16"], item["ts"])
-            item["spk"] = emb_spk
+        new_idx = (self.idx + 1) % len(self.candidates)
+        await head_line(f"[ROUTE] Обнаружено эхо-дублирование S2 → пробую {self.candidates[new_idx]}")
+        self.idx = new_idx
+        await self.s2ctrl.switch_to(self.candidates[self.idx])
+        self._last_switch_t = now
 
-    def _flush_old_pending(self):
-        """Flush items older than PENDING_MAX_AGE_S or when queue grows too large."""
-        now = time.time()
-        while self.pending:
-            item = self.pending[0]
-            if item.get("printed"):
-                self.pending.popleft()
-                continue
-            age = now - item["ts"]
-            if age < PENDING_MAX_AGE_S and len(self.pending) <= PENDING_MAX_ITEMS:
-                break
-            # Emit through merge buffer
-            spk = item.get("spk") or "S1"
-            txt = item["text"]
-            self._merge_or_emit(spk, txt)
-            item["printed"] = True
-            self.pending.popleft()
-
-    # ---------- main loop ----------
-    def run(self):
-        self.running = True
-        blocksize = int(self.in_sr * (self.frame_ms / 1000.0))
-
-        print(f"[INFO] Whisper local path: {ASR_MODEL_DIR}", flush=True)
-        print(f"[INFO] Input device index: {DEVICE_INDEX}, in_sr={self.in_sr} Hz; ASR target_sr={self.asr_sr} Hz", flush=True)
-
-        with sd.RawInputStream(
-            samplerate=self.in_sr,
-            blocksize=blocksize,
-            dtype="int16",
-            channels=1,
-            callback=self.audio_cb,
-            device=DEVICE_INDEX
-        ):
-            self.calibrate_noise()
-            print(f"[{now_iso()}] Listening (Ctrl+C to stop)...", flush=True)
-
-            in_speech = False
-            silence_count = 0
-            active_streak = 0
-            frames_in_seg = 0
-            voiced: List[bytes] = []
-
-            while self.running:
-                try:
-                    frame = self.audio_q.get(timeout=0.5)
-                except queue.Empty:
-                    # also periodically flush pending if waiting too long
-                    self._flush_old_pending()
-                    continue
-
-                if len(frame) != self.frame_bytes:
-                    continue
-
-                db = rms_dbfs(frame)
-                energetic = (db >= self.energy_threshold_db)
-                speech = energetic and self.vad.is_speech(frame, self.in_sr)
-
-                if speech:
-                    active_streak += 1
-                    if not in_speech and active_streak >= self.min_active_frames:
-                        in_speech = True
-                        silence_count = 0
-                        frames_in_seg = 0
-                        voiced = []
-                    if in_speech:
-                        voiced.append(frame)
-                        frames_in_seg += 1
-                        if frames_in_seg >= self.max_segment_frames:
-                            self._handle_segment(voiced)
-                            in_speech = False
-                            voiced = []
-                            frames_in_seg = 0
-                            silence_count = 0
-                else:
-                    active_streak = 0
-                    if in_speech:
-                        silence_count += 1
-                        # protect very short speech from being cut
-                        if frames_in_seg < self.min_segment_frames and silence_count < (self.silence_tail_frames * 2):
-                            continue
-                        if silence_count >= self.silence_tail_frames:
-                            self._handle_segment(voiced)
-                            in_speech = False
-                            voiced = []
-                            frames_in_seg = 0
-                            silence_count = 0
-
-                # Periodically try to reclassify/flush pending
-                self._reclassify_pending_if_ready()
-                self._flush_old_pending()
-
-    def _handle_segment(self, frames: List[bytes]):
-        if not frames:
-            return
-        pcm = b"".join(frames)
-        a48 = pcm16_to_f32(pcm)
-        a16 = resample(a48, self.in_sr, self.asr_sr)
-
-        # Decode
-        text = self.asr_decode(a16)
-        if not text:
-            return
-        if looks_like_junk(text):
-            return
-
-        ts = time.time()
-        # Provisional speaker
-        spk = self._assign_speaker(a16, ts)
-        # Queue as pending (to allow quick reclassification once both prototypes exist)
-        self.pending.append({"ts": ts, "audio16": a16, "text": text, "spk": spk, "printed": False})
-
-        # Immediate reclassify attempt + flush if queue too large/old
-        self._reclassify_pending_if_ready()
-        self._flush_old_pending()
-
-
-# =========================
-# ENTRY
-# =========================
-def main():
-    app = RealtimeASRApp()
-    try:
-        blocksize = int(INPUT_SR * (FRAME_MS / 1000.0))
-        print(f"[INFO] Opening input stream...", flush=True)
-        app.run()
-    except KeyboardInterrupt:
+    async def _monitor(self):
         try:
-            # final flush pending + merge buffer
-            while app.pending:
-                item = app.pending.popleft()
-                if not item.get("printed"):
-                    app._merge_or_emit(item.get("spk") or "S1", item["text"])
-            app._flush_merge_buf()
-        except Exception:
+            while True:
+                await asyncio.sleep(0.6)
+                if APP_PAUSED: continue
+                now = time.monotonic()
+                s1_recent = (now - self.last["S1"]["t"]) < 3.0
+                s2_silence = (now - self.last["S2"]["t"]) > 4.0
+                if s1_recent and s2_silence and len(self.candidates) > 1:
+                    if (now - self._last_switch_t) >= 6.0:
+                        new_idx = (self.idx + 1) % len(self.candidates)
+                        await head_line(f"[ROUTE] Нет S2-потока → пробую {self.candidates[new_idx]}")
+                        self.idx = new_idx
+                        await self.s2ctrl.switch_to(self.candidates[self.idx])
+                        self._last_switch_t = now
+        except asyncio.CancelledError:
             pass
-        print("\nInterrupted by user.", flush=True)
+
+# ------------------- Коалесцер реплик -------------------
+class Coalescer:
+    def __init__(self, live: LiveManager, tm: TranslationManager | None):
+        self.live = live
+        self.tm = tm
+        self._parts = {"S1":[], "S2":[]}
+        self._partial = {"S1":"", "S2":""}
+        self._last_activity = {"S1":0.0, "S2":0.0}
+        self._watch_task = None
+
+    def _joined(self, label: str) -> str:
+        parts = self._parts[label][:]
+        if self._partial[label]:
+            parts.append(self._partial[label])
+        txt = " ".join(p.strip() for p in parts if p.strip())
+        return _re.sub(r"\s+", " ", txt).strip()
+
+    async def start(self):
+        self._watch_task = asyncio.create_task(self._watchdog())
+
+    async def stop(self):
+        if self._watch_task:
+            self._watch_task.cancel()
+            with contextlib.suppress(Exception): await self._watch_task
+        for label in ("S1","S2"):
+            await self._finalize_if_needed(label, force=True)
+
+    async def on_partial(self, label: str, text: str):
+        if APP_PAUSED: return
+        if not self._parts[label] and not self._partial[label]:
+            if TM:
+                await TM.on_new_utterance_started(label)
+
+        self._partial[label] = text or ""
+        self._last_activity[label] = time.monotonic() * 1000.0
+        joined_now = self._joined(label)
+        await self.live.show_live_text(label, joined_now)
+
+        if label == "S2" and 'SM' in globals() and SM:
+            await SM.schedule_fast_partial(joined_now)
+
+    async def on_final_chunk(self, label: str, text: str):
+        if APP_PAUSED: return
+        if text:
+            self._parts[label].append(text)
+        self._partial[label] = ""
+        self._last_activity[label] = time.monotonic() * 1000.0
+        await self.live.show_live_text(label, self._joined(label))
+
+    async def _watchdog(self):
+        try:
+            while True:
+                await asyncio.sleep(0.05)
+                if APP_PAUSED: continue
+                now_ms = time.monotonic() * 1000.0
+                for label in ("S1","S2"):
+                    last = self._last_activity[label]
+                    if last <= 0:
+                        continue
+                    if (now_ms - last) >= EOU_FINALIZE_MS:
+                        await self._finalize_if_needed(label, force=False)
+        except asyncio.CancelledError:
+            pass
+
+    async def _finalize_if_needed(self, label: str, force: bool):
+        txt = self._joined(label)
+        if not txt:
+            return
+
+        if 'ROUTE_GUARD' in globals() and ROUTE_GUARD:
+            await ROUTE_GUARD.note(label, txt)
+
+        if label == "S2" and 'ROUTE_GUARD' in globals() and ROUTE_GUARD:
+            try:
+                if ROUTE_GUARD.is_echo_of_recent_s1(txt):
+                    await info_line("[ECHO] Подавил S2 как эхо собственной реплики")
+                    await ROUTE_GUARD.maybe_switch_due_to_echo()
+                    self._parts[label].clear()
+                    self._partial[label] = ""
+                    self._last_activity[label] = 0.0
+                    return
+            except Exception:
+                pass
+
+        tr_now = None
+        if TM:
+            tr_now = await TM.on_utterance_finalized(label)
+
+        await self.live.clear_live_line(label)
+        msg_id = await self.live.print_final_with_extras(label, txt, tr_text=tr_now)
+
+        if 'SM' in globals() and SM:
+            SM.add_history(label, txt)
+            if ENABLE_SUGGEST and label == "S2":
+                await SM.schedule_for_s2(anchor_id=msg_id)
+
+        self._parts[label].clear()
+        self._partial[label] = ""
+        self._last_activity[label] = 0.0
+
+# ------------------- утилиты старта/фоллбэка -------------------
+async def _wait_start_or_error(label, started_evt, err_box, timeout=8.0):
+    t0 = time.monotonic()
+    while True:
+        if started_evt.is_set():
+            return "started", None
+        if err_box.get("type"):
+            return "error", (err_box.get("type"), err_box.get("reason"))
+        if (time.monotonic() - t0) > timeout:
+            return "timeout", None
+        await asyncio.sleep(0.05)
+
+def _is_translation_schema_error(err_type: str, reason: str) -> bool:
+    if not reason:
+        return False
+    r = reason.lower()
+    return ("translation_config" in r and "not allowed" in r) or ("translation" in r and "invalid" in r)
+
+async def _close_reader_and_ws(sess, reader_task):
+    with contextlib.suppress(Exception):
+        await sess[4]()  # fin()
+    with contextlib.suppress(Exception):
+        reader_task.cancel()
+        await asyncio.sleep(0)
+
+# ------------------- OpenAI helpers: RU->EN цель + полезные фразы -------------------
+def _looks_russian(s: str) -> bool:
+    return bool(_re.search(r"[А-Яа-яЁё]", s or ""))
+
+def _openai_chat(messages, model: str, temperature: float = 0.0, max_tokens: int = 200, timeout: float = 8.0) -> str:
+    key = OPENAI_API_KEY
+    if not key:
+        return ""
+    try:
+        req = urllib.request.Request(
+            "https://api.openai.com/v1/chat/completions",
+            data=json.dumps({
+                "model": model,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens
+            }).encode("utf-8"),
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {key}",
+                "Content-Type": "application/json"
+            }
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        out = (data.get("choices") or [{}])[0].get("message", {}).get("content", "") or ""
+        return out.strip()
     except Exception as e:
-        print(f"Error: {e}", file=sys.stderr); sys.exit(1)
+        if DEBUG:
+            print(f"[OPENAI] request failed: {e}", file=sys.stderr)
+        return ""
+
+def _translate_ru_goal_to_en(text: str) -> str:
+    """
+    Перевод цели RU->EN (если цель на русском). Возвращает EN-строку.
+    Печатает Goal: ... для удобства, чтобы соответствовать текущему UX.
+    """
+    if not OPENAI_API_KEY:
+        return text
+    msg = [
+        {"role": "system", "content": "Translate the user's goal into concise, natural UK English. Return only the translation text without quotes."},
+        {"role": "user", "content": text}
+    ]
+    out = _openai_chat(msg, SUGGEST_MODEL or "gpt-4.1-nano", temperature=0.0, max_tokens=120, timeout=8.0)
+    if out:
+        out = _re.sub(r'^\s*[\"“](.*?)[\"”]\s*$', r'\1', out.strip())
+        print(f"Goal:\n{out}")
+        return out
+    return text
+
+def _generate_helpful_phrases(goal_en: str, context_en: str, n_min: int, n_max: int, max_words: int) -> list[str]:
+    """
+    Генерация 5–10 коротких полезных фраз (EN, UK tone) для звонка.
+    Каждая фраза без кавычек, по одной на строку, ≤ max_words слов.
+    """
+    if not (OPENAI_API_KEY and PHRASES_ENABLE):
+        return []
+    n_min = max(1, min(n_min, n_max))
+    n_max = max(n_min, n_max)
+
+    system = (
+        "You are a UK call coach for a live phone conversation. "
+        "Given the goal and context, produce short, natural UK-English phrases "
+        "the caller (S1) can say during the call. Each on its own line, no numbering, "
+        f"no quotes, and no comments. Keep each within {max_words} words."
+    )
+    user = (
+        f"Goal: {goal_en}\n"
+        f"Context: {context_en}\n\n"
+        f"Return between {n_min} and {n_max} distinct lines of ready-to-say phrases."
+    )
+    raw = _openai_chat(
+        messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+        model=PHRASES_MODEL or "gpt-4.1-nano",
+        temperature=0.2,
+        max_tokens=256,
+        timeout=8.0
+    )
+    if not raw:
+        return []
+
+    lines = [x.strip() for x in raw.splitlines()]
+    out: list[str] = []
+    for ln in lines:
+        if not ln:
+            continue
+        # снять любые маркеры списков
+        ln = _re.sub(r"^\s*[\-\*\u2022\d\.\)\]]+\s*", "", ln).strip()
+        # снять внешние кавычки
+        if len(ln) >= 2 and (ln[0] in "\"'“”‘’`") and (ln[-1] in "\"'“”‘’`"):
+            ln = ln[1:-1].strip()
+        if ln:
+            out.append(ln)
+        if len(out) >= n_max:
+            break
+
+    # если модель вернула меньше — ладно, не дуть щёки
+    return out
+
+# --- Загрузка цели, перевода и фраз ---
+_raw_goal = (ENV.get("DIALOG_GOAL_EN") or DIALOG_GOAL_EN_DEFAULT).strip()
+if _looks_russian(_raw_goal):
+    DIALOG_GOAL_EN = _translate_ru_goal_to_en(_raw_goal)
+else:
+    DIALOG_GOAL_EN = _raw_goal
+
+DIALOG_CONTEXT_EN = (ENV.get("DIALOG_CONTEXT_EN") or DIALOG_CONTEXT_EN_DEFAULT).strip()
+
+# Список полезных фраз (если доступен OPENAI_API и включено PHRASES_ENABLE)
+DIALOG_PHRASES_EN: list[str] = []
+try:
+    DIALOG_PHRASES_EN = _generate_helpful_phrases(
+        DIALOG_GOAL_EN, DIALOG_CONTEXT_EN, PHRASES_MIN, PHRASES_MAX, PHRASE_MAX_WORDS
+    )
+    if DIALOG_PHRASES_EN:
+        print("Phrases (EN):")
+        for i, p in enumerate(DIALOG_PHRASES_EN, 1):
+            print(f"  {i}. {p}")
+except Exception as _e:
+    if DEBUG:
+        print(f"[PHRASES] generation failed: {_e}", file=sys.stderr)
+    DIALOG_PHRASES_EN = []
+
+# Если хотим подмешать фразы в контекст для ReplyEngine (сильно помогает кратким моделям)
+if PHRASES_IN_CONTEXT and DIALOG_PHRASES_EN:
+    _ph = " | ".join(DIALOG_PHRASES_EN[:6])  # ограничим, чтобы не раздувать промпт
+    DIALOG_CONTEXT_EN = f"{DIALOG_CONTEXT_EN}  Helpful ready-to-say phrases for S1: {_ph}"
+
+# ------------------- main -------------------
+COALESCE: 'Coalescer | None' = None
+LIVE: 'LiveManager | None' = None
+TM: 'TranslationManager | None' = None
+SM: 'SuggestionManager | None' = None
+ROUTE_GUARD: 'RoutingGuard | None' = None
+
+async def main():
+    global LIVE, TM, COALESCE, SM, ROUTE_GUARD
+    await head_line(f"[INFO] Лог файл: {LOG_PATH}")
+
+    # S1 — только источник (микрофон)
+    if CAPTURE_S1:
+        if not S1_DEVICE:
+            await head_line("[WARN] S1_DEVICE не найден. Отключаю S1.")
+            cap_s1 = False
+        elif not S1_DEVICE.startswith("alsa_input."):
+            await head_line(f"[ERROR] S1_DEVICE='{S1_DEVICE}' не является источником (alsa_input.*). Отключаю S1.")
+            cap_s1 = False
+        else:
+            cap_s1 = True
+            await head_line(f"[INFO] S1_DEVICE = {S1_DEVICE}")
+    else:
+        cap_s1 = False
+        await head_line("[INFO] S1 отключён (CAPTURE_S1=0).")
+
+    # S2 — входящий поток с телефона
+    if CAPTURE_S2:
+        await head_line(f"[INFO] S2_TARGET (режим/имя) = {S2_TARGET or 'AUTO_BT_AUTO'}")
+    else:
+        await head_line("[INFO] S2 отключён (CAPTURE_S2=0).")
+
+    await head_line("[INFO] В звонке выберите маршрут Bluetooth на телефоне: jupiter-Asp")
+
+    # UI и менеджеры
+    LIVE = LiveManager(use_rich=True);   await LIVE.start()
+    TM   = TranslationManager(LIVE);     await TM.start()
+
+    SM   = SuggestionManager(goal_en=DIALOG_GOAL_EN, context_en=DIALOG_CONTEXT_EN)
+    await SM.start()
+
+    COALESCE = Coalescer(LIVE, TM);      await COALESCE.start()
+
+    # 1) старт RT-сессий
+    sessions = []
+    if CAPTURE_S2:
+        sessions.append(("S2",) + (await start_sm("S2", ENABLE_TRANSLATION)))
+    if cap_s1:
+        sessions.append(("S1",) + (await start_sm("S1", ENABLE_TRANSLATION)))
+    if not sessions:
+        await head_line("[ERROR] Нет активных сессий (оба канала отключены).")
+        await COALESCE.stop(); await TM.stop(); await SM.stop(); await LIVE.stop()
+        return
+
+    reader_tasks = [asyncio.create_task(s[2]()) for s in sessions]
+
+    # 2) ждём старта/фоллбэка без перевода
+    active = []
+    for i, s in enumerate(sessions):
+        name, ws, r, send, fin, started, err = s
+        st, info = await _wait_start_or_error(name, started, err, timeout=8.0)
+        if st == "started":
+            active.append(s); continue
+
+        do_retry = False
+        if st == "error":
+            et, rsn = info
+            await head_line(f"[{name}] Старт не удался: {et} — {rsn}")
+            if et == "protocol_error" and _is_translation_schema_error(et, rsn):
+                do_retry = True
+        elif st == "timeout" and ENABLE_TRANSLATION:
+            await head_line(f"[{name}] Timeout RecognitionStarted — пробую без перевода…")
+            do_retry = True
+
+        if do_retry:
+            await _close_reader_and_ws(s, reader_tasks[i])
+            await asyncio.sleep(0.8)
+            ws2, r2, send2, fin2, started2, err2 = await start_sm(name, False)
+            sessions[i] = (name, ws2, r2, send2, fin2, started2, err2)
+            reader_tasks[i] = asyncio.create_task(r2())
+            st2, info2 = await _wait_start_or_error(name, started2, err2, timeout=8.0)
+            if st2 == "started":
+                await head_line(f"[FALLBACK] {name}: перевода нет, работаем без него.")
+                active.append(sessions[i])
+            else:
+                await head_line(f"[ERROR] {name}: повторный старт без перевода не удался ({st2}: {info2}).")
+
+    if not active:
+        await head_line("[ERROR] Ни одна RT-сессия не запустилась.")
+        for t in reader_tasks:
+            with contextlib.suppress(Exception): t.cancel()
+        await COALESCE.stop(); await TM.stop(); await SM.stop(); await LIVE.stop()
+        return
+
+    # 3) квоты
+    still = []
+    for s in active:
+        name, ws, r, send, fin, started, err = s
+        if (err.get("type") or "").lower() == "quota_exceeded":
+            await head_line(f"[FALLBACK] {name} отклонён квотой — отключаю.")
+            with contextlib.suppress(Exception): await fin()
+        else:
+            still.append(s)
+    active = still
+    if not active:
+        await head_line("[ERROR] quota_exceeded для всех сессий.")
+        for t in reader_tasks:
+            with contextlib.suppress(Exception): t.cancel()
+        await COALESCE.stop(); await TM.stop(); await SM.stop(); await LIVE.stop()
+        return
+
+    # 4) кандидаты для S2 и старт захвата + роутер
+    tasks = []
+    have_S2 = any(s[0] == "S2" for s in active)
+    if have_S2:
+        s2_session = [s for s in active if s[0] == "S2"][0]
+        name, ws, r, send, fin, started, err = s2_session
+
+        explicit = (S2_TARGET and S2_TARGET not in ("AUTO_BT_SINK","AUTO_BT_AUTO","AUTO_DEFAULT_SINK","AUTO_ALSA_SINK"))
+        if explicit and not node_exists(S2_TARGET):
+            await head_line(f"[S2] Ожидаю появление узла {S2_TARGET} (до {S2_WAIT_FOR_APPEAR_SEC:.0f} с). "
+                            f"Во время звонка выберите на телефоне аудио 'Bluetooth-гарнитура/jupiter-Asp'.")
+            ok = await wait_for_exact_node(S2_TARGET, S2_WAIT_FOR_APPEAR_SEC)
+            if not ok:
+                await head_line(f"[ERROR] Узел {S2_TARGET} так и не появился — S2 будет отключён.")
+                with contextlib.suppress(Exception): await fin()
+                active = [s for s in active if s[0] != "S2"]
+                have_S2 = False
+
+        candidates = []
+        if have_S2:
+            if explicit:
+                candidates = [S2_TARGET]
+            else:
+                candidates = build_s2_candidates(S2_TARGET or "AUTO_BT_AUTO")
+                if REQUIRE_BT_FOR_S2 and not any(c.startswith(("bluez_input.","bluez_source.")) for c in candidates):
+                    await head_line(f"[S2] Жду появления HFP (bluez_input/source) до {S2_WAIT_FOR_APPEAR_SEC:.0f} с…")
+                    ins = await wait_for_any_bluez_input(S2_WAIT_FOR_APPEAR_SEC)
+                    if ins:
+                        candidates = build_s2_candidates(S2_TARGET or "AUTO_BT_AUTO")
+                    else:
+                        if ALLOW_S2_ALSA_FALLBACK:
+                            await head_line("[WARN] HFP не появился — разрешён ALSA-фоллбэк, использую monitor дефолтного sink.")
+                            candidates = build_s2_candidates("AUTO_DEFAULT_SINK")
+                        else:
+                            await head_line("[ERROR] HFP не появился, фоллбэк запрещён (ALLOW_S2_ALSA_FALLBACK=0). Отключаю S2.")
+                            with contextlib.suppress(Exception): await fin()
+                            active = [s for s in active if s[0] != "S2"]
+                            have_S2 = False
+
+        if have_S2 and not candidates:
+            await head_line("[ERROR] Нет подходящих нод для S2.")
+            with contextlib.suppress(Exception): await fin()
+            active = [s for s in active if s[0] != "S2"]
+            have_S2 = False
+
+        if have_S2:
+            s2ctrl = S2CaptureController(send, SAMPLE_RATE)
+            await s2ctrl.start(candidates[0])
+
+            global ROUTE_GUARD
+            ROUTE_GUARD = RoutingGuard(s2ctrl, candidates)
+            await ROUTE_GUARD.start()
+            tasks.append(s2ctrl.task)
+
+    # 5) старт захвата S1 (строго источник)
+    for s in active:
+        name, ws, r, send, fin, started, err = s
+        if name == "S1":
+            if not S1_DEVICE.startswith("alsa_input."):
+                await head_line(f"[ERROR] Пропуск S1: {S1_DEVICE} не является источником (alsa_input.*)")
+                continue
+            cmd = ["pw-record","--target",S1_DEVICE,"--format","s16","--channels","1","--rate",str(SAMPLE_RATE),"-"]
+            tasks.append(asyncio.create_task(run_pw_record(cmd, send, "S1_capture")))
+
+    # 6) мониторинг клавиатуры для паузы
+    async def monitor_keyboard():
+        global APP_PAUSED
+        await head_line(f"{YEL}[CONTROL] Press Enter to toggle PAUSE (Mute + Stop LLM){RESET}")
+        loop = asyncio.get_running_loop()
+        while True:
+            try:
+                # Читаем строку из stdin (блокирующе, но в отдельном треде)
+                await loop.run_in_executor(None, sys.stdin.readline)
+                
+                APP_PAUSED = not APP_PAUSED
+                
+                status_msg = "[CONTROL] === PAUSED (Muted) ===" if APP_PAUSED else "[CONTROL] === RESUMED (Live) ==="
+                col = YEL if APP_PAUSED else GRN
+                await print_and_log(f"{col}{status_msg}{RESET}")
+                
+                if LIVE: await LIVE._update_footer_now()
+
+            except Exception:
+                break
+
+    kb_task = asyncio.create_task(monitor_keyboard())
+    tasks.append(kb_task)
+
+    # 7) завершение по Ctrl+C
+    stop = asyncio.Event()
+    def _sig(*_): stop.set()
+    for sgn in (signal.SIGINT, signal.SIGTERM): signal.signal(sgn, _sig)
+    await stop.wait()
+
+    # 8) закрытие
+    for s in active:
+        with contextlib.suppress(Exception): await s[4]()  # fin
+    for t in reader_tasks + tasks:
+        with contextlib.suppress(Exception): t.cancel()
+    if ROUTE_GUARD:
+        await ROUTE_GUARD.stop()
+    await asyncio.sleep(0.2)
+    await COALESCE.stop(); await TM.stop(); await SM.stop(); await LIVE.stop()
 
 if __name__ == "__main__":
-    main()
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass
