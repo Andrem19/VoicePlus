@@ -1,0 +1,5 @@
+websockets
+rich
+uvloop; platform_system != "Windows"
+openai
+requests
